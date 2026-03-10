@@ -1,0 +1,18 @@
+{
+  "id": "nes_emulator",
+  "title": "Emulateur NES",
+  "category": "games",
+  "entry_screen": "SCENE_NES_EMU",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/nes_emulator/icon.png",
+  "required_capabilities": 193,
+  "optional_capabilities": 32,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

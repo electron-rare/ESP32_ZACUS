@@ -342,7 +342,9 @@ bool CameraManager::initCameraForMode(bool recorder_mode) {
 
   if (recorder_mode) {
     cfg.pixel_format = PIXFORMAT_RGB565;
-    cfg.frame_size = FRAMESIZE_QVGA;
+    // Keep recorder mode at a lower camera footprint to avoid DMA alloc failures
+    // when UI/FX buffers are active.
+    cfg.frame_size = FRAMESIZE_QQVGA;
     cfg.jpeg_quality = 12U;
   } else {
     cfg.pixel_format = PIXFORMAT_JPEG;

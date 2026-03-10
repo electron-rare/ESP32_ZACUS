@@ -22,31 +22,18 @@
 - [x] Campagne endurance outillée: `tests/sprint1_utility_contract.py` (mode serial + mode HTTP).
 - [x] Smoke série court validé: `python3 tests/sprint1_utility_contract.py --mode serial --cycles 5 --port /dev/cu.usbmodem5AB90753301`.
 - [ ] Gate endurance série 20 cycles/app encore rouge.
-  - **Verdict (2026-03-02)**: Échec à `calculator cycle 9/20` avec reboot panic (`reset_reason=4 = ESP_RST_TASK_WDT`)
-  - **🔴 ROOT CAUSE IDENTIFIED**: 
-    - Watchdog timeout during `tinyexpr eval()` cyclic action processing
-    - Heap free: ~45KB au cycle 9 (stable jusque-là → pas leak mémoire primaire)
-    - Stack pressure: Arduino event loop stack insuffisant (8192 bytes par défaut)
-    - Suspects: `tinyexpr eval()` complexité N², action latency croissante, ou FreeRTOS scheduling contention
-  - **✅ Mitigation appliquée**:
-    - [x] Augmenté `ARDUINO_LOOP_STACK_SIZE=16384` (8192 → 16384) dans [platformio.ini](platformio.ini#L115)
-    - [x] Compilation SUCCESS (31.06s, RAM 64.4%, Flash 42.0%)
-  - **⏳ À tester**: `python3 tests/sprint1_utility_contract.py --mode serial --cycles 20` (target: 20/20 SUCCESS)
-  - **À investiguer** (si re-fail): 
-    - Profiling `calculator` action latency (timeout tinyexpr sur expr complexe?)
-    - Event loop preemption (FreeRTOS task priority + affinity)
-    - Mutex contention I2S/audio parallel avec action processing
-
+  - Verdict (2026-03-02): échec à `calculator cycle 9/20` avec reboot panic (`reset_reason=4`) et `APP_STATUS parse failed` post-reboot.
+  - Contexte: issue non fonctionnelle app métier, liée à stabilité runtime/mémoire sous endurance.
 - [ ] Gate HTTP toujours bloqué côté reachability/auth (`/api/apps/*` non validé dans cette passe).
 
 - [x] Compiler et flasher le firmware sur le Freenove Media Kit (`pio run -e freenove_esp32s3_full_with_ui -t upload`)
 - [ ] Préparer les fichiers de test sur LittleFS (/data/scene_*.json, /data/screen_*.json, /data/*.wav)
-- [ ] Vérifier l'affichage TFT (boot, écran dynamique, transitions)
+- [ ] Vérifier l’affichage TFT (boot, écran dynamique, transitions)
 - [ ] Tester la réactivité tactile (zones, coordonnées, mapping)
 - [ ] Tester les boutons physiques (appui, mapping, transitions)
 - [ ] Tester la lecture audio (fichiers présents/absents, fallback)
 - [~] Observer les logs série (initialisation, actions, erreurs) en continu pendant endurance longue
-- [ ] Générer et archiver les logs d'évidence (logs/)
+- [ ] Générer et archiver les logs d’évidence (logs/)
 - [ ] Produire un artefact de validation (artifacts/)
 - [ ] Documenter toute anomalie ou limitation hardware constatée
 
@@ -69,71 +56,6 @@
   - `AppRuntimeManager`: profil ressource auto selon capabilities app (caméra vs micro).
 - [ ] Gate endurance longue Sprint 2 à lancer (20 cycles/app) + archivage logs.
 
-## Sprint 9 - Phase 9 Touch Input (2026-03-02)
-
-**Timeline**: Phase 9 - Amélioration UX & Touch Input (Semaine 1-2)  
-**Status**: 🟢 **IN PROGRESS** (touch emulation implémenté, physical hardware optional)
-
-### Phase 9A - Touch Input Emulation (Complété 2026-03-02 - 2h)
-
-- [x] Créer infrastructure émulation tactile (`TouchEmulator` class)
-  - [x] `include/drivers/input/touch_emulator.h`: Navigation curseur virtuel 4x4 grid
-  - [x] `src/drivers/input/touch_emulator.cpp`: Mouvement UP/DOWN/LEFT/RIGHT avec wrapping horizontal/vertical
-  - [x] Intégration `AmigaUIShell`:
-    - `setTouchManager(TouchManager*)`: Connexion au driver touch
-    - `setTouchEmulationMode(bool enabled)`: Activation mode émulation
-    - `enable_touch_emulation_` member variable: Flag runtime activation
-
-- [x] Implémenter `getTouchGridIndex(x, y)` pour mapping écran → grille
-  - Grid: 4 colonnes × 4 rangées, cellule 80×80px, offset (16, 32)
-  - Bounds checking: hors grille → retour 255 (invalid index)
-  - Tests edge cases: coins (0,0), (319,479), limites grille
-
-- [x] Brancher button handlers → touch virtuel via `TouchEmulator`
-  - **Button 0 (UP)**: déplace curseur ↑ une ligne (row - 1)
-  - **Button 1 (SELECT)**: déclenche touch à position curseur → launch app
-  - **Button 2 (DOWN)**: déplace curseur ↓ une ligne (row + 1)
-  - **Button 3 (MENU)**: ferme app runtime (mode unchanged)
-  - **Button 4**: Toggle LEFT ⇄ RIGHT curseur avec wrapping horizontal
-
-- [x] Compiler & build gate exécutée
-  - `pio run -e freenove_esp32s3_full_with_ui` **SUCCESS** (31.06s, RAM 64.4%, Flash 42.0%)
-
-- [ ] Tests de validation (À faire)
-  - [ ] Tests sur device: Navigation 4×4 via boutons → touch virtuel
-  - [ ] Taper 7 apps via émulation sans double-launch
-  - [ ] Vérifier 200ms debounce avant launch (existant)
-  - [ ] Endurance: 20 lancements cycliques sans leak
-  - [ ] Memory check: Heap stable post-launch
-
-- [ ] Hardware physique touch (optionnel - Phase 9B)
-  - [ ] Activer `FREENOVE_HAS_TOUCH=1` (env: `freenove_esp32s3_touch`)
-  - [ ] XPT2046 touchscreen SPI (CS=GPIO9, IRQ=GPIO15)
-  - [ ] Tests comparatifs: touch physique vs émulé
-  - [ ] Calibration écran si requis
-
-**Acceptance Criteria**:
-```
-✓ Compilation: SUCCESS
-✓ Touch emulation mode: ENABLED by default
-✓ Grid navigation: 4×4 sans bugs
-✓ App launch: déclenchement via couche tactile (physique ou émulée)
-✓ 20 cycles sans crash/watchdog
-✓ Heap stable (~210KB/327KB constant utilisation)
-```
-
-**Notes techniques**:
-- **Emulation philosophy**: Support "button-to-touch adapter" pour testing sans hardware
-- **Grid layout**: AmigaUI 64px icons + 16px spacing = 80px cells, 4 row/col
-- **Cursor state**: `TouchEmulator` owns gridIndex (0-15), `AmigaUIShell.selected_index_` kept in sync
-- **Touch routing**: Button input → emulator.move*() → getCursorPosition() → handleTouchInput(x,y)
-- **Files edited**:
-  - `ui_freenove_allinone/include/drivers/input/touch_emulator.h` (NEW)
-  - `ui_freenove_allinone/src/drivers/input/touch_emulator.cpp` (NEW)
-  - `ui_freenove_allinone/include/ui/ui_amiga_shell.h` (modified)
-  - `ui_freenove_allinone/src/ui/ui_amiga_shell.cpp` (modified: handleButtonInput)
-  - `ui_freenove_allinone/src/main.cpp` (modified: setTouchManager + setTouchEmulationMode at boot)
-
 ## Revue finale – Checklist agents
 
 - [ ] Vérifier la cohérence de la structure (dossiers, modules, scripts)
@@ -146,50 +68,37 @@
 - [ ] Vérifier la gestion dynamique des boutons/tactile
 - [ ] Vérifier la non-régression sur les autres firmwares (split)
 
-## Troubleshooting & Debug Guide
+# TODO Agent – Firmware All-in-One Freenove
 
-### Symptôme: Watchdog timeout (reset_reason=4) à cycle N
 
-**Diagnostic**:
-```bash
-# 1. Vérifier stack dans platformio.ini (l.115)
-grep "ARDUINO_LOOP_STACK_SIZE" platformio.ini
-# Expected: -DARDUINO_LOOP_STACK_SIZE=16384
+## Plan d’intégration détaillé (COMPLÉTÉ)
 
-# 2. Monitor en continu avec logs heap
-pio device monitor -b 115200 --filter esp32_exception_decoder | grep -E "TWDT|reset_reason|Free heap"
+- [x] Vérifier la présence du scénario par défaut sur LittleFS
+- [x] Charger la liste des fichiers de scènes et d’écrans (data/)
+- [x] Initialiser la navigation UI (LVGL, écrans dynamiques)
+- [x] Mapper les callbacks boutons/tactile vers la navigation UI
+- [x] Préparer le fallback LittleFS si fichier manquant
+- [x] Logger l’initialisation (logs/)
 
-# 3. Identifier action coupable (cycle N-1)
-python3 tests/sprint1_utility_contract.py --mode serial --cycles $N --verbose \
-  2>&1 | grep -B5 "reset_reason"
-```
+- [x] Boucle principale d’intégration
+	- [x] Navigation UI (LVGL, écrans dynamiques)
+	- [x] Exécution scénario (lecture, actions, transitions)
+	- [x] Gestion audio (lecture, stop, files LittleFS)
+	- [x] Gestion boutons/tactile (événements, mapping)
+	- [x] Gestion stockage (LittleFS, fallback)
+	- [x] Logs/artefacts
 
-**Root causes courants**:
-| Symptôme | Cause | Solution |
-|----------|-------|----------|
-| Watchdog à cycle 9 (calculator) | Stack débordement lors eval complexe | Augmenter ARDUINO_LOOP_STACK_SIZE (8192→16384) |
-| TWDT pendant audio stream | Mutex contention (I2S + LVGL) | Réduire UI_DRAW_BUF_LINES (16→8) |
-| Double-launch panic | App runtime double init | Vérifier anti-reentrancy dans launchSelectedApp() |
-| Heap fragmentation | Leak mémoire lent (50KB/100cycles) | Profile alloc/free (Arena API) |
+## Validation hardware (EN COURS)
 
-### Commandes Debug utiles
+- [ ] Tests sur Freenove Media Kit (affichage, audio, boutons, tactile)
+- [ ] Génération de logs d’évidence (logs/)
+- [ ] Production d’artefacts de validation (artifacts/)
 
-```bash
-# Status complet app runtime
-echo "APP_STATUS" | nc localhost 5555
+## Documentation
 
-# Check ressources device
-echo "PING" | nc localhost 5555
-
-# Logs persistent
-tail -f /tmp/zacus_*.log
-
-# Rebuild avec debug symbols
-pio run -e freenove_esp32s3_full_with_ui -t clean && pio run -v
-
-# Flash + monitor en une commande
-pio run -e freenove_esp32s3_full_with_ui -t upload && pio device monitor -b 115200
-```
+- [ ] Mise à jour README.md (usage, build, structure)
+- [ ] Mise à jour AGENT_FUSION.md (règles d’intégration, conventions)
+- [ ] Synchronisation avec la doc onboarding principale
 
 ## Spécifications fonctionnelles utilisateur à livrer
 
@@ -214,7 +123,7 @@ pio run -e freenove_esp32s3_full_with_ui -t upload && pio device monitor -b 1152
 - [ ] **Application de sciences pour enfants** (contenus interactifs + quiz)
 - [ ] **Application de géographie pour enfants** (quiz/carte/images interactives)
 
-### Plan d'intégration recommandé (ordre de dépendance)
+### Plan d’intégration recommandé (ordre de dépendance)
 
 - [ ] 1) Base commune UI + assets + navigation (priorité haute)
 - [ ] 2) Audio stack: lecteur audio / livres / podcasts / webradio
@@ -234,7 +143,7 @@ pio run -e freenove_esp32s3_full_with_ui -t upload && pio device monitor -b 1152
 ## UX/UI enfants + inspiration Amiga (nouvelle contrainte)
 
 - [ ] Définir un thème visuel enfant inspiré Amiga (palette, icônes, typo, motion)
-- [ ] Créer écran home "kids shell" (grille d'apps colorée + navigation simple)
+- [ ] Créer écran home "kids shell" (grille d’apps colorée + navigation simple)
 - [ ] Ajouter transitions ludiques non bloquantes (sans pénaliser FPS/runtime loop)
 - [ ] Standardiser composants UI: bouton, carte app, badge état, feedback action
 - [ ] Ajouter règles de lisibilité enfant (texte court, contraste, zones tactiles larges)
@@ -242,10 +151,9 @@ pio run -e freenove_esp32s3_full_with_ui -t upload && pio device monitor -b 1152
 ## Progression technique réalisée (itération courante)
 
 - [x] Socle apps runtime: registre, lifecycle manager, endpoints `/api/apps/*`
-- [x] Contrat capacités runtime: flags explicites et gating au lancement d'app
+- [x] Contrat capacités runtime: flags explicites et gating au lancement d’app
 - [x] Actions scénario app-aware: `open_app`, `close_app`, `app_action`
 - [x] Bonjour/mDNS: service publié `_zacus._tcp` + découverte peers
 - [x] Partage fichiers simple: endpoints `/api/share/peers`, `/api/share/files`, `/api/share/upload`
 - [x] Spécifications JSON: manifest/streams/progress + registre exemple
 - [x] Direction UX enfant + Amiga: fichier de thème de référence
-- [x] Phase 9 Touch Input: EmulationMode + grid navigation

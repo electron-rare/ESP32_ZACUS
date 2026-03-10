@@ -1,0 +1,18 @@
+{
+  "id": "kids_drawing",
+  "title": "Dessin",
+  "category": "kids_learning",
+  "entry_screen": "SCENE_DRAWING",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_drawing/icon.png",
+  "required_capabilities": 128,
+  "optional_capabilities": 0,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

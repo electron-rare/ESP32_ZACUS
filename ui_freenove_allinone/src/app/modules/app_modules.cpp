@@ -445,11 +445,16 @@ class CameraVideoModule : public ModuleBase {
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
-    if (!context.camera->start()) {
+    if (!context.camera->startRecorderSession()) {
       setError("camera_start_failed");
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
+    preview_on_ = true;
+    clip_active_ = false;
+    clip_frames_.clear();
+    setError("");
+    updateStatusEvent();
     return true;
   }
 
@@ -474,20 +479,36 @@ class CameraVideoModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
+    if (equalsIgnoreCase(action.name, "status")) {
+      updateStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "preview_on")) {
       if (!context_.camera->start()) {
         setError("preview_on_failed");
+      } else {
+        preview_on_ = true;
+        setError("");
+        updateStatusEvent();
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "preview_off")) {
       context_.camera->stop();
+      preview_on_ = false;
+      setError("");
+      updateStatusEvent();
       return;
     }
     if (equalsIgnoreCase(action.name, "snapshot")) {
       String out_path;
       if (!context_.camera->snapshotToFile(nullptr, &out_path)) {
         setError("snapshot_failed");
+      } else {
+        char event[40] = {0};
+        std::snprintf(event, sizeof(event), "snap=%u", static_cast<unsigned int>(out_path.length()));
+        copyText(status_.last_event, sizeof(status_.last_event), event);
+        setError("");
       }
       return;
     }
@@ -496,25 +517,40 @@ class CameraVideoModule : public ModuleBase {
       clip_frames_.clear();
       clip_started_ms_ = millis();
       next_frame_ms_ = clip_started_ms_;
+      setError("");
+      updateStatusEvent();
       return;
     }
     if (equalsIgnoreCase(action.name, "clip_stop")) {
       stopClipAndPersist();
+      setError("");
+      updateStatusEvent();
       return;
     }
     if (equalsIgnoreCase(action.name, "list_media")) {
-      String list_json;
-      if (context_.camera->recorderListPhotos(&list_json, 32, true) < 0) {
+      static constexpr int kMaxListItems = 12;
+      String items[kMaxListItems];
+      const int count = context_.camera->recorderListPhotos(items, kMaxListItems, true);
+      if (count < 0) {
         setError("list_media_failed");
+      } else {
+        char event[40] = {0};
+        std::snprintf(event, sizeof(event), "list=%d", count);
+        copyText(status_.last_event, sizeof(status_.last_event), event);
+        setError("");
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "delete_media")) {
       if (action.payload[0] == '\0' || !context_.camera->recorderRemoveFile(action.payload)) {
         setError("delete_media_failed");
+      } else {
+        setError("");
+        copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
       }
       return;
     }
+    setError("unsupported_action");
   }
 
   void end() override {
@@ -554,6 +590,18 @@ class CameraVideoModule : public ModuleBase {
     clip_frames_.clear();
   }
 
+  void updateStatusEvent() {
+    char event[40] = {0};
+    std::snprintf(event,
+                  sizeof(event),
+                  "pv=%u clip=%u frames=%u",
+                  preview_on_ ? 1U : 0U,
+                  clip_active_ ? 1U : 0U,
+                  static_cast<unsigned int>(clip_frames_.size()));
+    copyText(status_.last_event, sizeof(status_.last_event), event);
+  }
+
+  bool preview_on_ = false;
   bool clip_active_ = false;
   uint32_t clip_started_ms_ = 0U;
   uint32_t next_frame_ms_ = 0U;
@@ -571,55 +619,77 @@ class QrScannerModule : public ModuleBase {
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
-    if (!context.camera->start()) {
-      setError("camera_start_failed");
-      status_.state = AppRuntimeState::kFailed;
-      return false;
-    }
+    // QR scene owns camera lifecycle through ESP32QRCodeReader.
+    // Ensure CameraManager is not already holding the camera driver.
+    context.camera->stop();
+    scanning_ = false;
+    copyText(last_type_, sizeof(last_type_), "none");
+    setError("");
+    updateStatusEvent();
     return true;
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
+    if (equalsIgnoreCase(action.name, "status")) {
+      updateStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "scan_start")) {
       scanning_ = true;
+      setError("");
+      updateStatusEvent();
       return;
     }
     if (equalsIgnoreCase(action.name, "scan_stop")) {
       scanning_ = false;
+      setError("");
+      updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "scan_once")) {
+    if (equalsIgnoreCase(action.name, "scan_once") || equalsIgnoreCase(action.name, "scan_payload")) {
       scanning_ = false;
       classifyPayload(action.payload);
+      setError("");
+      updateStatusEvent();
+      return;
     }
+    setError("unsupported_action");
   }
 
   void end() override {
-    if (context_.camera != nullptr) {
-      context_.camera->stop();
-    }
     ModuleBase::end();
   }
 
  private:
   void classifyPayload(const char* payload) {
     if (payload == nullptr || payload[0] == '\0') {
-      copyText(status_.last_event, sizeof(status_.last_event), "unknown");
+      copyText(last_type_, sizeof(last_type_), "unknown");
       return;
     }
     if (std::strncmp(payload, "http://", 7U) == 0 || std::strncmp(payload, "https://", 8U) == 0) {
-      copyText(status_.last_event, sizeof(status_.last_event), "url");
+      copyText(last_type_, sizeof(last_type_), "url");
       return;
     }
     if (std::strncmp(payload, "app:", 4U) == 0 || std::strncmp(payload, "zacus:", 6U) == 0) {
-      copyText(status_.last_event, sizeof(status_.last_event), "app");
+      copyText(last_type_, sizeof(last_type_), "app");
       return;
     }
-    copyText(status_.last_event, sizeof(status_.last_event), "text");
+    copyText(last_type_, sizeof(last_type_), "text");
+  }
+
+  void updateStatusEvent() {
+    char event[40] = {0};
+    std::snprintf(event,
+                  sizeof(event),
+                  "scan=%u type=%s",
+                  scanning_ ? 1U : 0U,
+                  last_type_);
+    copyText(status_.last_event, sizeof(status_.last_event), event);
   }
 
   bool scanning_ = false;
+  char last_type_[12] = "none";
 };
 
 class DictaphoneModule : public ModuleBase {
@@ -633,33 +703,54 @@ class DictaphoneModule : public ModuleBase {
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
+    setError("");
+    updateStatusEvent();
     return true;
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
+    if (equalsIgnoreCase(action.name, "status")) {
+      updateStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "record_start")) {
       const uint16_t sec = static_cast<uint16_t>(parseUint(action.payload, 30U));
       if (!context_.media->startRecording(sec, nullptr)) {
         setError("record_start_failed");
+      } else {
+        setError("");
+        copyText(status_.last_event, sizeof(status_.last_event), "recording=1");
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "record_stop")) {
       if (!context_.media->stopRecording()) {
         setError("record_stop_failed");
+      } else {
+        setError("");
+        copyText(status_.last_event, sizeof(status_.last_event), "recording=0");
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "play_file")) {
-      if (action.payload[0] == '\0' || !context_.media->play(action.payload, context_.audio)) {
+      char path[120] = {0};
+      if (!normalizeRecordPath(action.payload, path, sizeof(path)) ||
+          !context_.media->play(path, context_.audio)) {
         setError("play_file_failed");
+      } else {
+        setError("");
+        copyText(status_.last_event, sizeof(status_.last_event), "play_ok");
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "delete_file")) {
-      if (action.payload[0] == '\0' || !LittleFS.remove(action.payload)) {
+      char path[120] = {0};
+      if (!normalizeRecordPath(action.payload, path, sizeof(path)) || !LittleFS.remove(path)) {
         setError("delete_file_failed");
+      } else {
+        setError("");
+        copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
       }
       return;
     }
@@ -667,9 +758,20 @@ class DictaphoneModule : public ModuleBase {
       String list_json;
       if (!context_.media->listFiles("records", &list_json)) {
         setError("list_records_failed");
+      } else {
+        DynamicJsonDocument list_doc(2048);
+        size_t count = 0U;
+        if (deserializeJson(list_doc, list_json) == DeserializationError::Ok && list_doc.is<JsonArrayConst>()) {
+          count = list_doc.as<JsonArrayConst>().size();
+        }
+        char event[40] = {0};
+        std::snprintf(event, sizeof(event), "records=%u", static_cast<unsigned int>(count));
+        copyText(status_.last_event, sizeof(status_.last_event), event);
+        setError("");
       }
       return;
     }
+    setError("unsupported_action");
   }
 
   void end() override {
@@ -678,10 +780,49 @@ class DictaphoneModule : public ModuleBase {
     }
     ModuleBase::end();
   }
+
+ private:
+  void updateStatusEvent() {
+    copyText(status_.last_event, sizeof(status_.last_event), "records=ready");
+  }
+
+  bool normalizeRecordPath(const char* payload, char* out, size_t out_size) const {
+    if (out == nullptr || out_size == 0U || payload == nullptr || payload[0] == '\0') {
+      return false;
+    }
+    if (payload[0] == '/') {
+      copyText(out, out_size, payload);
+      return true;
+    }
+    char path[120] = {0};
+    std::snprintf(path, sizeof(path), "/recorder/%s", payload);
+    copyText(out, out_size, path);
+    return true;
+  }
 };
 
 class TimerToolsModule : public ModuleBase {
  public:
+  bool begin(const AppContext& context) override {
+    if (!ModuleBase::begin(context)) {
+      return false;
+    }
+    sw_running_ = false;
+    sw_started_ms_ = 0U;
+    sw_acc_ms_ = 0U;
+    sw_elapsed_ms_ = 0U;
+    sw_lap_ms_ = 0U;
+    cd_running_ = false;
+    cd_started_ms_ = 0U;
+    cd_duration_ms_ = 0U;
+    cd_remaining_ms_ = 0U;
+    cd_done_notified_ = false;
+    countdown_visual_until_ms_ = 0U;
+    setError("");
+    copyText(status_.last_event, sizeof(status_.last_event), "timer_ready");
+    return true;
+  }
+
   void tick(uint32_t now_ms) override {
     ModuleBase::tick(now_ms);
     if (sw_running_) {
@@ -692,21 +833,35 @@ class TimerToolsModule : public ModuleBase {
       if (elapsed >= cd_duration_ms_) {
         cd_remaining_ms_ = 0U;
         cd_running_ = false;
-        copyText(status_.last_event, sizeof(status_.last_event), "countdown_done");
+        if (!cd_done_notified_) {
+          cd_done_notified_ = true;
+          notifyCountdownDone(now_ms);
+        }
       } else {
         cd_remaining_ms_ = cd_duration_ms_ - elapsed;
       }
+    }
+    if (countdown_visual_until_ms_ != 0U && static_cast<int32_t>(now_ms - countdown_visual_until_ms_) >= 0) {
+      if (context_.hardware != nullptr) {
+        context_.hardware->clearManualLed();
+      }
+      countdown_visual_until_ms_ = 0U;
     }
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
     const uint32_t now_ms = millis();
+    if (equalsIgnoreCase(action.name, "status")) {
+      writeStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "sw_start")) {
       if (!sw_running_) {
         sw_running_ = true;
         sw_started_ms_ = now_ms;
       }
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "sw_stop")) {
@@ -714,10 +869,12 @@ class TimerToolsModule : public ModuleBase {
         sw_acc_ms_ += (now_ms - sw_started_ms_);
         sw_running_ = false;
       }
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "sw_lap")) {
       sw_lap_ms_ = sw_running_ ? (sw_acc_ms_ + (now_ms - sw_started_ms_)) : sw_acc_ms_;
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "sw_reset")) {
@@ -726,12 +883,22 @@ class TimerToolsModule : public ModuleBase {
       sw_acc_ms_ = 0U;
       sw_elapsed_ms_ = 0U;
       sw_lap_ms_ = 0U;
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "cd_set")) {
-      cd_duration_ms_ = parseUint(action.payload, 0U) * 1000U;
+      DynamicJsonDocument body(192);
+      uint32_t seconds = 0U;
+      if (parseJsonPayload(action, &body) && body["seconds"].is<uint32_t>()) {
+        seconds = body["seconds"].as<uint32_t>();
+      } else {
+        seconds = parseUint(action.payload, 0U);
+      }
+      cd_duration_ms_ = seconds * 1000U;
       cd_remaining_ms_ = cd_duration_ms_;
       cd_running_ = false;
+      cd_done_notified_ = false;
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "cd_start")) {
@@ -740,6 +907,8 @@ class TimerToolsModule : public ModuleBase {
       }
       cd_started_ms_ = now_ms;
       cd_running_ = true;
+      cd_done_notified_ = false;
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "cd_pause")) {
@@ -749,17 +918,56 @@ class TimerToolsModule : public ModuleBase {
         cd_remaining_ms_ = cd_duration_ms_;
         cd_running_ = false;
       }
+      setError("");
       return;
     }
     if (equalsIgnoreCase(action.name, "cd_reset")) {
       cd_running_ = false;
       cd_duration_ms_ = 0U;
       cd_remaining_ms_ = 0U;
+      cd_done_notified_ = false;
+      setError("");
       return;
     }
+    setError("unsupported_action");
   }
 
  private:
+  void notifyCountdownDone(uint32_t now_ms) {
+    copyText(status_.last_event, sizeof(status_.last_event), "countdown_done");
+    setError("");
+    if (context_.storage != nullptr && context_.audio != nullptr && context_.media != nullptr) {
+      static constexpr const char* kDoneCandidates[] = {
+          "/apps/timer_tools/audio/action.wav",
+          "/apps/shared/audio/ui_success.wav",
+      };
+      for (const char* path : kDoneCandidates) {
+        if (path == nullptr || !context_.storage->fileExists(path)) {
+          continue;
+        }
+        if (context_.media->play(path, context_.audio)) {
+          break;
+        }
+      }
+    }
+    if (context_.hardware != nullptr &&
+        context_.hardware->setManualLed(255U, 180U, 32U, 120U, true)) {
+      countdown_visual_until_ms_ = now_ms + 1500U;
+    }
+  }
+
+  void writeStatusEvent() {
+    char event[64] = {0};
+    std::snprintf(event,
+                  sizeof(event),
+                  "sw=%lu cd=%lu run=%u",
+                  static_cast<unsigned long>(sw_elapsed_ms_),
+                  static_cast<unsigned long>(cd_remaining_ms_),
+                  cd_running_ ? 1U : 0U);
+    copyText(status_.last_event, sizeof(status_.last_event), event);
+    setError("");
+  }
+
   bool sw_running_ = false;
   uint32_t sw_started_ms_ = 0U;
   uint32_t sw_acc_ms_ = 0U;
@@ -770,10 +978,14 @@ class TimerToolsModule : public ModuleBase {
   uint32_t cd_started_ms_ = 0U;
   uint32_t cd_duration_ms_ = 0U;
   uint32_t cd_remaining_ms_ = 0U;
+  bool cd_done_notified_ = false;
+  uint32_t countdown_visual_until_ms_ = 0U;
 };
 
 class FlashlightModule : public ModuleBase {
  public:
+  static constexpr uint8_t kMaxSafeLevel = 128U;
+
   bool begin(const AppContext& context) override {
     if (!ModuleBase::begin(context)) {
       return false;
@@ -783,37 +995,103 @@ class FlashlightModule : public ModuleBase {
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
+    is_on_ = false;
+    level_ = 96U;
+    setError("");
+    copyText(status_.last_event, sizeof(status_.last_event), "light_ready");
     return true;
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
+    if (equalsIgnoreCase(action.name, "status")) {
+      updateStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "light_on")) {
-      if (!context_.hardware->setManualLed(255U, 255U, 255U, level_, false)) {
+      if (!applyLight(true)) {
         setError("light_on_failed");
+      } else {
+        setError("");
       }
       return;
     }
     if (equalsIgnoreCase(action.name, "light_off")) {
       context_.hardware->clearManualLed();
+      is_on_ = false;
+      setError("");
+      updateStatusEvent();
+      return;
+    }
+    if (equalsIgnoreCase(action.name, "light_toggle")) {
+      if (!applyLight(!is_on_)) {
+        setError("light_toggle_failed");
+      } else {
+        setError("");
+      }
       return;
     }
     if (equalsIgnoreCase(action.name, "set_level")) {
-      const uint32_t parsed = parseUint(action.payload, level_);
-      level_ = static_cast<uint8_t>(parsed > 255U ? 255U : parsed);
+      DynamicJsonDocument body(128);
+      uint32_t parsed = level_;
+      if (parseJsonPayload(action, &body) && body["level"].is<uint32_t>()) {
+        parsed = body["level"].as<uint32_t>();
+      } else {
+        parsed = parseUint(action.payload, level_);
+      }
+      level_ = static_cast<uint8_t>(parsed > kMaxSafeLevel ? kMaxSafeLevel : parsed);
+      if (is_on_ && !applyLight(true)) {
+        setError("set_level_failed");
+        return;
+      }
+      setError("");
+      updateStatusEvent();
       return;
     }
+    setError("unsupported_action");
   }
 
   void end() override {
     if (context_.hardware != nullptr) {
       context_.hardware->clearManualLed();
     }
+    is_on_ = false;
     ModuleBase::end();
   }
 
  private:
+  bool applyLight(bool on) {
+    if (context_.hardware == nullptr) {
+      return false;
+    }
+    if (!on || level_ == 0U) {
+      context_.hardware->clearManualLed();
+      is_on_ = false;
+      updateStatusEvent();
+      return true;
+    }
+    const uint8_t safe_level = (level_ > kMaxSafeLevel) ? kMaxSafeLevel : level_;
+    if (!context_.hardware->setManualLed(255U, 255U, 255U, safe_level, false)) {
+      return false;
+    }
+    level_ = safe_level;
+    is_on_ = true;
+    updateStatusEvent();
+    return true;
+  }
+
+  void updateStatusEvent() {
+    char event[40] = {0};
+    std::snprintf(event,
+                  sizeof(event),
+                  "on=%u level=%u",
+                  is_on_ ? 1U : 0U,
+                  static_cast<unsigned int>(level_));
+    copyText(status_.last_event, sizeof(status_.last_event), event);
+  }
+
   uint8_t level_ = 120U;
+  bool is_on_ = false;
 };
 
 class ExpressionParser {
@@ -928,12 +1206,18 @@ class CalculatorModule : public ModuleBase {
  public:
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
+    if (equalsIgnoreCase(action.name, "status")) {
+      writeStatusEvent();
+      return;
+    }
     if (equalsIgnoreCase(action.name, "clear")) {
       result_ = 0.0;
       setError("");
+      writeStatusEvent();
       return;
     }
     if (!equalsIgnoreCase(action.name, "eval")) {
+      setError("unsupported_action");
       return;
     }
     if (action.payload[0] == '\0') {
@@ -945,6 +1229,9 @@ class CalculatorModule : public ModuleBase {
     const double value = te_interp(action.payload, &error);
     if (error != 0) {
       setError("eval_error");
+      char msg[40] = {0};
+      std::snprintf(msg, sizeof(msg), "eval_error@%d", error);
+      copyText(status_.last_event, sizeof(status_.last_event), msg);
       return;
     }
     result_ = value;
@@ -957,13 +1244,17 @@ class CalculatorModule : public ModuleBase {
     }
     result_ = value;
 #endif
-    char msg[40] = {0};
-    std::snprintf(msg, sizeof(msg), "result=%.4f", result_);
-    copyText(status_.last_event, sizeof(status_.last_event), msg);
     setError("");
+    writeStatusEvent();
   }
 
  private:
+  void writeStatusEvent() {
+    char msg[40] = {0};
+    std::snprintf(msg, sizeof(msg), "result=%.4f", result_);
+    copyText(status_.last_event, sizeof(status_.last_event), msg);
+  }
+
   double result_ = 0.0;
 };
 

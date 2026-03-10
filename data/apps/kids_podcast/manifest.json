@@ -1,0 +1,18 @@
+{
+  "id": "kids_podcast",
+  "title": "Podcast Enfants",
+  "category": "kids_media",
+  "entry_screen": "SCENE_PODCAST",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_podcast/icon.png",
+  "required_capabilities": 129,
+  "optional_capabilities": 80,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "kids_languages",
+  "title": "Langues Enfants",
+  "category": "kids_learning",
+  "entry_screen": "SCENE_KIDS_LANG",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_languages/icon.png",
+  "required_capabilities": 129,
+  "optional_capabilities": 80,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

@@ -274,6 +274,14 @@ bool AppRuntimeManager::startApp(const AppStartRequest& request, uint32_t now_ms
   status_.state = AppRuntimeState::kStarting;
   status_.started_at_ms = now_ms;
   status_.required_cap_mask = descriptor->required_capabilities;
+  if (context_.resource != nullptr) {
+    const uint32_t req = descriptor->required_capabilities;
+    if (appCapabilityMaskHas(req, CAP_AUDIO_IN)) {
+      context_.resource->setProfile(runtime::resource::ResourceProfile::kGfxPlusMic);
+    } else if (appCapabilityMaskHas(req, CAP_CAMERA)) {
+      context_.resource->setProfile(runtime::resource::ResourceProfile::kGfxPlusCamSnapshot);
+    }
+  }
   status_.missing_cap_mask = evaluateMissingCapabilities(*descriptor);
   if (status_.missing_cap_mask != 0U) {
     copyText(status_.last_error, sizeof(status_.last_error), "resource_busy");

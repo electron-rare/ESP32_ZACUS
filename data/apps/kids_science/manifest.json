@@ -1,0 +1,18 @@
+{
+  "id": "kids_science",
+  "title": "Sciences Enfants",
+  "category": "kids_learning",
+  "entry_screen": "SCENE_KIDS_SCIENCE",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_science/icon.png",
+  "required_capabilities": 128,
+  "optional_capabilities": 81,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

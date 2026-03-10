@@ -1,0 +1,200 @@
+--- forcing DTR inactive
+--- forcing RTS inactive
+
+Please build project in debug configuration to get more details about an exception.
+See https://docs.platformio.org/page/projectconf/build_configurations.html
+
+
+--- Terminal on /dev/cu.usbmodem5AB90753301 | 115200 8-N-1
+--- Available filters and text transformations: debug, default, direct, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+05:27:43.411 > ESP-ROM:esp32s3-20210327
+05:27:43.411 > Build:Mar 27 2021
+05:27:43.411 > rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
+05:27:43.411 > SPIWP:0xee
+05:27:43.411 > mode:DIO, clock div:1
+05:27:43.411 > load:0x3fce3808,len:0x4bc
+05:27:43.411 > load:0x403c9700,len:0xbd8
+05:27:43.411 > load:0x403cc700,len:0x2a0c
+05:27:43.411 > entry 0x403c98d0
+05:27:43.411 > [MAIN] Freenove all-in-one boot
+05:27:43.411 > [BOOT] fw=freenove_esp32s3 version=freenove_esp32s3 build=Mar  2 2026 05:16:04
+05:27:43.411 > [BOOT] reset_reason=1 (power_on)
+05:27:43.411 > [BOOT] psram_found=0 psram_total=0 psram_free=0 psram_largest=0
+05:27:43.411 > [BOOT] heap_internal_free=89564 heap_internal_largest=53236
+05:27:43.411 > [CFG] UI_DRAW_BUF_IN_PSRAM=1 FREENOVE_PSRAM_UI_DRAW_BUFFER=1 UI_CAMERA_FB_IN_PSRAM=1 FREENOVE_PSRAM_CAMERA_FRAMEBUFFER=1 UI_AUDIO_RINGBUF_IN_PSRAM=1 UI_DMA_TX_IN_DRAM=1
+05:27:43.411 > [MEM] free_heap=89564 min_free_heap=84224 total_heap=114956
+05:27:43.411 > [MEM] internal_free=89564 internal_largest=53236
+05:27:43.411 > [MEM] psram_found=0 total_psram=0 free_psram=0 largest_psram=0
+05:27:43.411 > [MEM] PSRAM expected by build flags but not detected
+05:27:43.411 > [FS] path missing (skip mkdir to keep boot safe): /data
+05:27:43.411 > [FS] path missing (skip mkdir to keep boot safe): /audio
+05:27:43.411 > [FS] path missing (skip mkdir to keep boot safe): /story/audio
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /story/actions
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /scenarios
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /scenarios/data
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /screens
+05:27:43.564 > [FS] SD_MMC mounted size=3839MB
+05:27:43.564 > [FS] LittleFS ready (sd=1)
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /data
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /scenarios
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /scenarios/data
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /screens
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /story/audio
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /story/actions
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /audio
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/audio_player/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/audio_player/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/camera_video/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/camera_video/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/dictaphone/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/dictaphone/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/timer_tools/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/timer_tools/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/flashlight/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/flashlight/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/calculator/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/calculator/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/qr_scanner/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/qr_scanner/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/audiobook_player/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/audiobook_player/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_webradio/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_webradio/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_podcast/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_podcast/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_drawing/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_drawing/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_coloring/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_coloring/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_music/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_music/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_yoga/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_yoga/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_meditation/content
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_meditation/cache
+05:27:43.564 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_languages/content
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_languages/cache
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_math/content
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_math/cache
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_science/content
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_science/cache
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_geography/content
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/kids_geography/cache
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/nes_emulator/content
+05:27:43.565 > [FS] path missing (skip mkdir to keep boot safe): /apps/nes_emulator/cache
+05:27:43.565 > [MAIN] SD story sync disabled on boot (LittleFS is primary)
+05:27:43.565 > [NET] cfg host=zacus-freenove local= wifi_test= ap_default=Freenove-Setup ap_policy=0 pause_retry_on_ap_client=1 retry_ms=15000 espnow_boot=1 bridge_story=1 peers=0
+05:27:43.565 > [HW] cfg boot=1 telemetry_ms=2500 led_auto=1 mic=1 threshold=72 la_trigger=1 target=440 tol=18 cents=42 conf_min=28 level_min=8 stable=3000ms timeout=60000ms battery=1 low_pct=20
+05:27:43.565 > [CAM] cfg boot=0 frame=VGA quality=12 fb=1 xclk=20000000 dir=/picture
+05:27:43.565 > [MEDIA] cfg music=/music picture=/picture record=/recorder max_sec=30 auto_stop=1
+05:27:43.565 > [SHARE] mdns init failed
+05:27:43.565 > [BOOT] startup_mode=story media_validated=0
+05:27:43.565 > [APP] registry loaded=1 count=20
+05:27:43.565 > [MAIN] default scenario checksum=901480099
+05:27:43.565 > [MAIN] story storage sd=1
+05:27:43.565 > [AUTH] setup_mode=1 auth_required=0 token_set=0
+05:27:43.565 > [AUDIO] player disabled: PSRAM not detected
+05:27:43.565 > [MAIN] audio profile=0:sketch19 count=3
+05:27:43.565 > [AUDIO] file missing fs=littlefs path=/music/boot_radio.mp3
+05:27:43.565 > [AUDIO] diagnostic playback unavailable
+05:27:43.565 > [HW] WS2812 ready pin=48 count=4
+05:27:43.565 > [HW] battery ADC ready pin=20
+05:27:43.565 > [HW] mic I2S ready sck=3 ws=14 din=46
+05:27:43.565 > [BTN] analog ladder mode on GPIO 19
+05:27:43.565 > [BTN] async scan task started
+05:27:43.565 > [TOUCH] disabled
+05:27:43.565 > E (4793) wifi_init: Failed to deinit Wi-Fi driver (0x3001)
+05:27:43.565 > E (4794) wifi_init: Failed to deinit Wi-Fi (0x3001)
+05:27:43.565 > [NET] wifi ready hostname=zacus-freenove
+05:27:43.565 > [NET] fallback AP configured ssid=
+05:27:43.565 > [NET] local policy target= force_ap_if_not_local=0 retry_ms=15000 pause_retry_on_ap_client=0
+05:27:43.565 > [NET] wifi+web disabled (espnow_only_mode=1)
+05:27:43.565 > E (4819) wifi_init: Failed to deinit Wi-Fi driver (0x3001)
+05:27:43.565 > E (4820) wifi_init: Failed to deinit Wi-Fi (0x3001)
+05:27:43.565 > [NET] ESP-NOW ready
+05:27:43.565 > [WEB] disabled (espnow_only_mode=1)
+05:27:43.565 > [DISPLAY] backend=lovyangfx
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=15360 tag=ui.draw.first fail_count=1
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=46080 tag=ui.draw.first fail_count=2
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=38400 tag=ui.draw.first fail_count=3
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=30720 tag=ui.draw.first fail_count=4
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=23040 tag=ui.draw.first fail_count=5
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=19200 tag=ui.draw.first fail_count=6
+05:27:43.565 > [MEM] alloc_fallback source=PSRAM->INTERNAL bytes=11520 tag=ui.draw.first
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=11520 tag=ui.draw.second fail_count=7
+05:27:43.565 > [UI] draw buffer fallback mono lines=12 bytes=11520 source=PSRAM
+05:27:43.565 > [MEM] alloc_fail source=INTERNAL_DMA bytes=15360 tag=ui.trans fail_count=8
+05:27:43.565 > [MEM] alloc_fail source=INTERNAL_DMA bytes=11520 tag=ui.trans fail_count=9
+05:27:43.565 > [MEM] alloc_fail source=INTERNAL_DMA bytes=23040 tag=ui.trans fail_count=10
+05:27:43.565 > [MEM] alloc_fail source=INTERNAL_DMA bytes=7680 tag=ui.trans fail_count=11
+05:27:43.565 > [MEM] alloc_fallback source=INTERNAL_DMA->INTERNAL bytes=5760 tag=ui.trans
+05:27:43.565 > [UI] trans buffer ready lines=6 pixels=2880 source=INTERNAL_DMA
+05:27:43.565 > [UI] draw lines reduced for trans buffer: 12 -> 6
+05:27:43.565 > [UI] DMA async flush enabled
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=38400 tag=fx_sprite fail_count=12
+05:27:43.565 > [UI] FX init failed at 160x120@18, retry fallback 128x96@15
+05:27:43.565 > [MEM] alloc_fail source=PSRAM bytes=24576 tag=fx_sprite fail_count=13
+05:27:43.565 > [UI] FX engine disabled: init failed
+05:27:43.565 > [UI] LVGL + display ready backend=lgfx
+05:27:43.565 > [UI] GFX_STATUS depth=16 mode=RGB565 theme256=0 lines=6 double=0 source=PSRAM full_frame=0 dma_req=1 dma_async=1 trans_px=2880 trans_lines=6 pending=0 flush=0 dma=0 sync=0 flush_spi_avg=0 flush_spi_max=0 draw_lvgl_avg=0 draw_lvgl_max=0 fx_enabled=0 fx_scene=0 fx_fps=0 fx_frames=0 fx_blit=0/0/0 tail=0 fx_dma_to=0 fx_fail=0 fx_skip_busy=0 block=0 ovf=0 stall=0 recover=0 async_fallback=0
+05:27:43.566 > [UI_AMIGA] Loaded app: Lecteur Audio (audio_player) color=00FFFF
+05:27:43.566 > [UI_AMIGA] Loaded app: Calculatrice (calculator) color=FFFF00
+05:27:43.566 > [UI_AMIGA] Loaded app: Chronometre/Minuteur (timer_tools) color=FF00FF
+05:27:43.566 > [UI_AMIGA] Loaded app: Lampe de Poche (flashlight) color=0088FF
+05:27:43.566 > [UI_AMIGA] Loaded app: Appareil Photo/Video (camera_video) color=00FF88
+05:27:43.566 > [UI_AMIGA] Loaded app: Dictaphone (dictaphone) color=FF8800
+05:27:43.566 > [UI_AMIGA] Loaded app: Lecteur QR Code (qr_scanner) color=FF0088
+05:27:43.566 > [UI_AMIGA] Loaded app: Livres Audio (audiobook_player) color=88FF00
+05:27:43.566 > [UI_AMIGA] Loaded app: Webradio Enfants (kids_webradio) color=00FFFF
+05:27:43.566 > [UI_AMIGA] Loaded app: Podcast Enfants (kids_podcast) color=FFFF00
+05:27:43.566 > [UI_AMIGA] Loaded app: Musique Enfants (kids_music) color=FF00FF
+05:27:43.566 > [UI_AMIGA] Loaded app: Yoga Enfants (kids_yoga) color=0088FF
+05:27:43.566 > [UI_AMIGA] Loaded app: Meditation Enfants (kids_meditation) color=00FF88
+05:27:43.566 > [UI_AMIGA] Loaded app: Langues Enfants (kids_languages) color=FF8800
+05:27:43.566 > [UI_AMIGA] Loaded app: Maths Enfants (kids_math) color=FF0088
+05:27:43.566 > [UI_AMIGA] Loaded app: Sciences Enfants (kids_science) color=88FF00
+05:27:43.566 > [UI_AMIGA] Loaded app: Geographie Enfants (kids_geography) color=00FFFF
+05:27:43.566 > [UI_AMIGA] Loaded app: Dessin (kids_drawing) color=FFFF00
+05:27:43.566 > [UI_AMIGA] Loaded app: Coloriage (kids_coloring) color=FF00FF
+05:27:43.566 > [UI_AMIGA] Loaded app: Emulateur NES (nes_emulator) color=0088FF
+05:27:43.566 > [UI_AMIGA] Loaded 20 enabled apps from registry
+05:27:43.566 > [UI_AMIGA] Initialized Amiga shell with 20 apps
+05:27:43.566 > [UI_AMIGA] Drawing main menu (20 apps)
+05:27:43.566 > [UI_AMIGA] Icon: Lecteur Audio at (16,32) color=00FFFF (selected)
+05:27:43.566 > [UI_AMIGA] Pulse effect: scale=1.05
+05:27:43.566 > [UI_AMIGA] Icon: Calculatrice at (96,32) color=FFFF00 
+05:27:43.566 > [UI_AMIGA] Icon: Chronometre/Minuteur at (176,32) color=FF00FF 
+05:27:43.566 > [UI_AMIGA] Icon: Lampe de Poche at (256,32) color=0088FF 
+05:27:43.566 > [UI_AMIGA] Icon: Appareil Photo/Video at (16,112) color=00FF88 
+05:27:43.566 > [UI_AMIGA] Icon: Dictaphone at (96,112) color=FF8800 
+05:27:43.566 > [UI_AMIGA] Icon: Lecteur QR Code at (176,112) color=FF0088 
+05:27:43.566 > [UI_AMIGA] Icon: Livres Audio at (256,112) color=88FF00 
+05:27:43.566 > [UI_AMIGA] Icon: Webradio Enfants at (16,192) color=00FFFF 
+05:27:43.566 > [UI_AMIGA] Icon: Podcast Enfants at (96,192) color=FFFF00 
+05:27:43.566 > [UI_AMIGA] Icon: Musique Enfants at (176,192) color=FF00FF 
+05:27:43.566 > [UI_AMIGA] Icon: Yoga Enfants at (256,192) color=0088FF 
+05:27:43.566 > [UI_AMIGA] Icon: Meditation Enfants at (16,272) color=00FF88 
+05:27:43.566 > [UI_AMIGA] Icon: Langues Enfants at (96,272) color=FF8800 
+05:27:43.566 > [UI_AMIGA] Icon: Maths Enfants at (176,272) color=FF0088 
+05:27:43.566 > [UI_AMIGA] Icon: Sciences Enfants at (256,272) color=88FF00 
+05:27:43.566 > [UI_AMIGA] Icon: Geographie Enfants at (16,352) color=00FFFF 
+05:27:43.566 > [UI_AMIGA] Icon: Dessin at (96,352) color=FFFF00 
+05:27:43.566 > [UI_AMIGA] Icon: Coloriage at (176,352) color=FF00FF 
+05:27:43.566 > [UI_AMIGA] Icon: Emulateur NES at (256,352) color=0088FF 
+05:27:43.566 > [UI_AMIGA] Main menu displayed
+05:27:43.566 > [AMP] lazy init (on SCENE_MP3_PLAYER)
+05:27:43.566 > [CAM_UI] init failed
+05:27:43.566 > [UI] render step=n/a screen=n/a pack=n/a playing=0
+05:27:43.566 > [RESOURCE] auto profile=gfx_plus_cam_snapshot scene=n/a screen=n/a pack=n/a
+05:27:43.566 > [MEM] alloc_fail source=PSRAM bytes=24576 tag=fx_sprite fail_count=14
+05:27:43.566 > [MEM] alloc_fail source=PSRAM bytes=24576 tag=fx_sprite fail_count=15
+05:27:43.566 > [UI] FX rearm skipped scene=SCENE_READY reason=engine_not_ready
+05:27:43.566 > [UI] scene=SCENE_READY effect=0 speed=0 title=1 symbol=1 scenario=N/A audio=0 timeline=0 transition=1:240
+05:27:43.566 > [MEM] alloc_fail source=PSRAM bytes=24576 tag=fx_sprite fail_count=16
+05:27:43.566 > [MEM] alloc_fail source=PSRAM bytes=24576 tag=fx_sprite fail_count=17
+05:27:43.566 > [UI] FX rearm skipped scene=SCENE_READY reason=engine_not_ready
+05:27:43.566 > [METRICS] reset=1 ui_fps=0 ui_frames=1 audio_underrun=0 sd_errors=0
+05:27:43.566 > [NET] ESP-NOW off
+05:27:43.566 > E (6836) wifi:alloc pp wdev funcs fail

@@ -119,8 +119,8 @@ class NetworkManager {
   void handleEspNowSend(const uint8_t* mac_addr, esp_now_send_status_t status);
 
   static constexpr uint8_t kMaxPeerCache = 16U;
-  static constexpr uint8_t kRxQueueSize = 6U;
-  static constexpr size_t kPayloadCapacity = 192U;
+  static constexpr uint8_t kRxQueueSize = 5U;
+  static constexpr size_t kPayloadCapacity = 176U;
   static constexpr size_t kEspNowFrameCapacity = 240U;
   static constexpr uint32_t kStaConnectTimeoutMs = 12000U;
   static constexpr uint32_t kEspNowRefreshPeriodMs = 1000U;

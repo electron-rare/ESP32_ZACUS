@@ -3698,15 +3698,18 @@ void setup() {
     g_audio.playDiagnosticTone();
   }
 
-  if (!g_scenario.begin(kDefaultScenarioFile)) {
-    Serial.println("[MAIN] scenario init failed");
-  }
+  // Scenario loading disabled to boot directly to Amiga UI Shell grid launcher
+  // if (!g_scenario.begin(kDefaultScenarioFile)) {
+  //   Serial.println("[MAIN] scenario init failed");
+  // }
   g_last_action_step_key[0] = '\0';
 
   g_ui.begin();
   
   // Initialize Amiga UI Shell for grid-based app launcher
   g_amiga_shell.init(&g_hardware, &g_ui, &g_app_registry);
+  g_amiga_shell.setTouchManager(&g_touch);     // Connect touch manager for emulation
+  g_amiga_shell.setTouchEmulationMode(true);  // Enable button-to-touch emulation
   g_amiga_shell.onStart();
   
   g_ui.setLaDetectionState(false, 0U, 0U, g_hardware_cfg.mic_la_stable_ms, 0U, g_hardware_cfg.mic_la_timeout_ms);

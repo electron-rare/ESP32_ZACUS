@@ -1,0 +1,18 @@
+{
+  "id": "kids_math",
+  "title": "Maths Enfants",
+  "category": "kids_learning",
+  "entry_screen": "SCENE_KIDS_MATH",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_math/icon.png",
+  "required_capabilities": 128,
+  "optional_capabilities": 81,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

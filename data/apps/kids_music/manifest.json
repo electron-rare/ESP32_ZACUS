@@ -1,0 +1,18 @@
+{
+  "id": "kids_music",
+  "title": "Musique Enfants",
+  "category": "kids_media",
+  "entry_screen": "SCENE_KIDS_MUSIC",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/kids_music/icon.png",
+  "required_capabilities": 129,
+  "optional_capabilities": 80,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "assets": {
+    "icons": [],
+    "scenes": [],
+    "media": []
+  }
+}

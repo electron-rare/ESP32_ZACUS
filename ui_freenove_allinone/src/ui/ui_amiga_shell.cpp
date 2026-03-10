@@ -3,6 +3,27 @@
 #include "hardware_manager.h"
 #include "ui_manager.h"
 #include "app/app_registry.h"
+#include <cstring>
+
+namespace {
+
+const char* appRuntimeStateLabel(AppRuntimeState state) {
+  switch (state) {
+    case AppRuntimeState::kIdle:
+      return "idle";
+    case AppRuntimeState::kStarting:
+      return "starting";
+    case AppRuntimeState::kRunning:
+      return "running";
+    case AppRuntimeState::kStopping:
+      return "stopping";
+    case AppRuntimeState::kFailed:
+      return "failed";
+  }
+  return "unknown";
+}
+
+}  // namespace
 
 AmigaUIShell g_amiga_shell;
 
@@ -14,6 +35,54 @@ bool AmigaUIShell::init(HardwareManager* hw, UiManager* ui, AppRegistry* registr
   loadAppsFromRegistry();
   Serial.printf("[UI_AMIGA] Initialized Amiga shell with %u apps\n", apps_.size());
   return true;
+}
+
+void AmigaUIShell::setRuntimeBridge(const AmigaAppRuntimeBridge* bridge) {
+  runtime_bridge_ = bridge;
+  Serial.printf("[UI_AMIGA] Runtime bridge attached=%u\n", runtime_bridge_ != nullptr ? 1U : 0U);
+}
+
+void AmigaUIShell::setTouchManager(TouchManager* touch_mgr) {
+  touch_manager_ = touch_mgr;
+  Serial.printf("[UI_AMIGA] Touch manager attached=%u\n", touch_manager_ != nullptr ? 1U : 0U);
+}
+
+void AmigaUIShell::setTouchEmulationMode(bool enabled) {
+  enable_touch_emulation_ = enabled;
+  if (enabled) {
+    // Initialize emulator with grid layout matching AmigaUI shell
+    touch_emulator_.begin(GRID_COLS, GRID_ROWS, 
+                          ICON_SIZE + ICON_SPACING, ICON_SIZE + ICON_SPACING,
+                          GRID_START_X, GRID_START_Y);
+    touch_emulator_.setGridIndex(selected_index_);
+    Serial.println("[UI_AMIGA] Touch emulation ENABLED");
+  } else {
+    Serial.println("[UI_AMIGA] Touch emulation DISABLED (button-only mode)");
+  }
+}
+
+bool AmigaUIShell::requestOpenApp(const char* app_id, const char* mode, const char* source) {
+  if (runtime_bridge_ == nullptr || runtime_bridge_->open_app == nullptr) {
+    Serial.println("[UI_AMIGA] APP_OPEN_FAIL reason=bridge_unavailable");
+    return false;
+  }
+  return runtime_bridge_->open_app(app_id, mode, source);
+}
+
+bool AmigaUIShell::requestCloseApp(const char* reason) {
+  if (runtime_bridge_ == nullptr || runtime_bridge_->close_app == nullptr) {
+    Serial.println("[UI_AMIGA] APP_CLOSE_FAIL reason=bridge_unavailable");
+    return false;
+  }
+  return runtime_bridge_->close_app(reason);
+}
+
+AppRuntimeStatus AmigaUIShell::currentStatus() const {
+  AppRuntimeStatus status = {};
+  if (runtime_bridge_ == nullptr || runtime_bridge_->current_status == nullptr) {
+    return status;
+  }
+  return runtime_bridge_->current_status();
 }
 
 void AmigaUIShell::loadAppsFromRegistry() {
@@ -102,14 +171,40 @@ void AmigaUIShell::selectApp(uint8_t grid_index) {
 }
 
 void AmigaUIShell::launchSelectedApp() {
-  if (selected_index_ < apps_.size()) {
-    const AppIcon& app = apps_[selected_index_];
-    Serial.printf("[UI_AMIGA] Launching: %s\n", app.app_id.c_str());
-    
-    // Transition effect
-    playTransitionFX();
-    
-    // TODO: Dispatch to AppCoordinator to launch app
+  if (selected_index_ >= apps_.size()) {
+    return;
+  }
+
+  const uint32_t now_ms = millis();
+  if ((now_ms - last_launch_ms_) < LAUNCH_DEBOUNCE_MS) {
+    Serial.printf("[UI_AMIGA] APP_OPEN_SKIP reason=debounce delta_ms=%lu\n",
+                  static_cast<unsigned long>(now_ms - last_launch_ms_));
+    return;
+  }
+
+  const AppIcon& app = apps_[selected_index_];
+  const AppRuntimeStatus status = currentStatus();
+  if ((status.state == AppRuntimeState::kStarting || status.state == AppRuntimeState::kRunning) &&
+      std::strcmp(status.id, app.app_id.c_str()) == 0) {
+    Serial.printf("[UI_AMIGA] APP_OPEN_SKIP reason=already_%s id=%s\n",
+                  appRuntimeStateLabel(status.state),
+                  app.app_id.c_str());
+    return;
+  }
+
+  Serial.printf("[UI_AMIGA] Launching: %s\n", app.app_id.c_str());
+  playTransitionFX();
+
+  last_launch_ms_ = now_ms;
+  const bool ok = requestOpenApp(app.app_id.c_str(), "default", "amiga_shell");
+  if (ok) {
+    Serial.printf("[UI_AMIGA] APP_OPEN_OK id=%s\n", app.app_id.c_str());
+  } else {
+    const AppRuntimeStatus after = currentStatus();
+    Serial.printf("[UI_AMIGA] APP_OPEN_FAIL id=%s err=%s state=%s\n",
+                  app.app_id.c_str(),
+                  after.last_error,
+                  appRuntimeStateLabel(after.state));
   }
 }
 
@@ -247,11 +342,75 @@ void AmigaUIShell::handleTouchInput(uint16_t x, uint16_t y) {
 }
 
 void AmigaUIShell::handleButtonInput(uint8_t button_id) {
+  // Touch emulation mode: buttons control virtual cursor
+  if (enable_touch_emulation_) {
+    uint16_t cursor_x = 0, cursor_y = 0;
+    uint8_t grid_idx = 0;
+
+    switch (button_id) {
+      case 0: {  // UP - move cursor up
+        touch_emulator_.moveUp();
+        touch_emulator_.getCursorPosition(&cursor_x, &cursor_y, &grid_idx);
+        selected_index_ = grid_idx;
+        Serial.printf("[UI_AMIGA_EMU] UP → grid[%u] at (%u,%u)\n", grid_idx, cursor_x, cursor_y);
+        break;
+      }
+
+      case 1: {  // SELECT - trigger touch at cursor position
+        touch_emulator_.getCursorPosition(&cursor_x, &cursor_y, &grid_idx);
+        Serial.printf("[UI_AMIGA_EMU] SELECT → touch at (%u,%u) grid[%u]\n", 
+                      cursor_x, cursor_y, grid_idx);
+        handleTouchInput(cursor_x, cursor_y);
+        break;
+      }
+
+      case 2: {  // DOWN - move cursor down
+        touch_emulator_.moveDown();
+        touch_emulator_.getCursorPosition(&cursor_x, &cursor_y, &grid_idx);
+        selected_index_ = grid_idx;
+        Serial.printf("[UI_AMIGA_EMU] DOWN → grid[%u] at (%u,%u)\n", grid_idx, cursor_x, cursor_y);
+        break;
+      }
+
+      case 3: {  // MENU - close running app (unchanged)
+        const AppRuntimeStatus status = currentStatus();
+        if (status.state == AppRuntimeState::kStarting || status.state == AppRuntimeState::kRunning) {
+          const bool ok = requestCloseApp("amiga_shell_menu");
+          Serial.printf("[UI_AMIGA_EMU] APP_CLOSE_%s reason=menu\n", ok ? "OK" : "FAIL");
+        } else {
+          Serial.println("[UI_AMIGA_EMU] MENU button: no running app");
+        }
+        break;
+      }
+
+      case 4: {  // LEFT/RIGHT toggle - alternate direction
+        cursor_direction_toggle_ = !cursor_direction_toggle_;
+        if (cursor_direction_toggle_) {
+          touch_emulator_.moveRight();
+          Serial.print("[UI_AMIGA_EMU] Button 4 → RIGHT ");
+        } else {
+          touch_emulator_.moveLeft();
+          Serial.print("[UI_AMIGA_EMU] Button 4 → LEFT ");
+        }
+        touch_emulator_.getCursorPosition(&cursor_x, &cursor_y, &grid_idx);
+        selected_index_ = grid_idx;
+        Serial.printf("→ grid[%u] at (%u,%u)\n", grid_idx, cursor_x, cursor_y);
+        break;
+      }
+
+      default:
+        Serial.printf("[UI_AMIGA_EMU] Unknown button: %u\n", button_id);
+        break;
+    }
+    return;  // Exit early in emulation mode
+  }
+
+  // === STANDARD BUTTON NAVIGATION MODE ===
   // Button mapping for grid navigation:
   // Button 0 (UP):     Move selection up (previous row)
   // Button 1 (SELECT): Launch selected app
   // Button 2 (DOWN):   Move selection down (next row)
-  // Button 3 (MENU):   Future: return to launcher or show menu
+  // Button 3 (MENU):   Return to launcher or show menu
   
   switch (button_id) {
     case 0: {  // UP button - move to previous row
@@ -279,7 +438,13 @@ void AmigaUIShell::handleButtonInput(uint8_t button_id) {
     }
     
     case 3: {  // MENU button - future use
-      Serial.println("[UI_AMIGA] MENU button: reserved for future use");
+      const AppRuntimeStatus status = currentStatus();
+      if (status.state == AppRuntimeState::kStarting || status.state == AppRuntimeState::kRunning) {
+        const bool ok = requestCloseApp("amiga_shell_menu");
+        Serial.printf("[UI_AMIGA] APP_CLOSE_%s reason=menu\n", ok ? "OK" : "FAIL");
+      } else {
+        Serial.println("[UI_AMIGA] MENU button: no running app");
+      }
       break;
     }
     

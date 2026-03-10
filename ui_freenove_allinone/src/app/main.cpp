@@ -60,6 +60,7 @@
 #include "ui/audio_player/amiga_audio_player.h"
 #include "ui/camera_capture/win311_camera_ui.h"
 #include "ui_manager.h"
+#include "ui/ui_amiga_shell.h"
 
 #ifndef ZACUS_FW_VERSION
 #define ZACUS_FW_VERSION "dev"
@@ -84,6 +85,11 @@ constexpr uint32_t kWarningSirenBeatIntervalMs = 700U;
 constexpr size_t kSerialLineCapacity = 192U;
 constexpr bool kBootDiagnosticTone = true;
 constexpr bool kAutoSyncStoryFromSdOnBoot = false;
+#if defined(ZACUS_SPRINT_DIAG_MODE) && (ZACUS_SPRINT_DIAG_MODE != 0)
+constexpr bool kSprintDiagMode = true;
+#else
+constexpr bool kSprintDiagMode = false;
+#endif
 constexpr const char* kEspNowBroadcastTarget = "broadcast";
 constexpr const char* kStepWinEtape = "RTC_ESP_ETAPE1";
 constexpr const char* kPackWin = "PACK_WIN";
@@ -97,7 +103,9 @@ constexpr size_t kEspNowDeviceNameCapacity = 33U;
 constexpr const char* kEspNowDeviceNameDefault = "U_SON";
 constexpr const char* kCredentialsNvsNamespace = "zacus_net";
 constexpr const char* kEspNowDeviceNameNvsKey = "esp_name";
-constexpr uint32_t kEspNowDiscoveryIntervalMs = 1000U;  // 1s refresh (was 15s)
+constexpr uint32_t kEspNowDiscoveryIntervalMs = kSprintDiagMode ? 15000U : 1000U;
+constexpr uint32_t kMetricsLogPeriodMs = kSprintDiagMode ? 15000U : 5000U;
+constexpr uint32_t kSprintDiagTelemetryMinMs = 8000U;
 constexpr size_t kHotlineSceneSyncPayloadCapacity = 224U;
 #if defined(USE_AUDIO) && (USE_AUDIO != 0)
 constexpr const char* kAmpMusicPathPrimary = "/music";
@@ -108,7 +116,7 @@ constexpr const char* kCameraSceneId = "SCENE_PHOTO_MANAGER";
 constexpr const char* kMediaManagerSceneId = "ZACUS_U-SON";
 constexpr const char* kTestLabSceneId = "SCENE_TEST_LAB";
 constexpr const char* kDefaultBootSceneId = "ZACUS_U-SON";
-constexpr bool kBootEspNowOnlyMode = true;
+constexpr bool kBootEspNowOnlyMode = kSprintDiagMode ? false : true;
 constexpr const char* kTestLabLockStepId = "TEST_LAB_LOCK";
 constexpr bool kLockNvsMediaManagerMode = true;
 constexpr bool kForceTestLabSceneLock = false;
@@ -186,6 +194,7 @@ WebServer g_web_server(80);
 bool g_web_started = false;
 bool g_web_disconnect_sta_pending = false;
 uint32_t g_web_disconnect_sta_at_ms = 0U;
+bool g_diag_ap_stopped = false;
 bool g_hardware_started = false;
 uint32_t g_next_hw_telemetry_ms = 0U;
 bool g_mic_tuner_stream_enabled = false;
@@ -205,7 +214,7 @@ bool g_web_auth_required = false;
 bool g_resource_profile_auto = true;
 char g_web_auth_token[kWebAuthTokenCapacity] = {0};
 char g_espnow_device_name[kEspNowDeviceNameCapacity] = "U_SON";
-bool g_espnow_discovery_runtime_enabled = true;
+bool g_espnow_discovery_runtime_enabled = !kSprintDiagMode;
 uint32_t g_next_espnow_discovery_ms = 0U;
 char g_last_action_step_key[72] = {0};
 char g_serial_line[kSerialLineCapacity] = {0};
@@ -3820,6 +3829,74 @@ const char* appRuntimeStateLabel(AppRuntimeState state) {
   }
 }
 
+bool runtimeStartAppWithLog(const AppStartRequest& request, uint32_t now_ms, const char* channel) {
+  const bool ok = g_app_runtime_manager.startApp(request, now_ms);
+  const AppRuntimeStatus status = g_app_runtime_manager.current();
+  Serial.printf("%s id=%s mode=%s source=%s state=%s err=%s channel=%s\n",
+                ok ? "APP_OPEN_OK" : "APP_OPEN_FAIL",
+                request.id,
+                request.mode,
+                request.source,
+                appRuntimeStateLabel(status.state),
+                status.last_error,
+                (channel != nullptr) ? channel : "n/a");
+  return ok;
+}
+
+bool runtimeStopAppWithLog(const AppStopRequest& request, uint32_t now_ms, const char* channel) {
+  const bool ok = g_app_runtime_manager.stopApp(request, now_ms);
+  const AppRuntimeStatus status = g_app_runtime_manager.current();
+  Serial.printf("%s id=%s reason=%s state=%s err=%s channel=%s\n",
+                ok ? "APP_CLOSE_OK" : "APP_CLOSE_FAIL",
+                request.id,
+                request.reason,
+                appRuntimeStateLabel(status.state),
+                status.last_error,
+                (channel != nullptr) ? channel : "n/a");
+  return ok;
+}
+
+bool runtimeHandleActionWithLog(const AppAction& action, uint32_t now_ms, const char* channel) {
+  const bool ok = g_app_runtime_manager.handleAction(action, now_ms);
+  const AppRuntimeStatus status = g_app_runtime_manager.current();
+  Serial.printf("%s id=%s action=%s state=%s err=%s channel=%s\n",
+                ok ? "APP_ACTION_OK" : "APP_ACTION_FAIL",
+                action.id,
+                action.name,
+                appRuntimeStateLabel(status.state),
+                status.last_error,
+                (channel != nullptr) ? channel : "n/a");
+  return ok;
+}
+
+bool amigaShellOpenAppBridge(const char* app_id, const char* mode, const char* source) {
+  if (app_id == nullptr || app_id[0] == '\0') {
+    Serial.println("APP_OPEN_FAIL id=<empty> reason=missing_app_id channel=amiga_shell_bridge");
+    return false;
+  }
+  AppStartRequest request = {};
+  copyText(request.id, sizeof(request.id), app_id);
+  copyText(request.mode, sizeof(request.mode), (mode != nullptr && mode[0] != '\0') ? mode : "default");
+  copyText(request.source, sizeof(request.source), (source != nullptr && source[0] != '\0') ? source : "amiga_shell");
+  return runtimeStartAppWithLog(request, millis(), "amiga_shell_bridge");
+}
+
+bool amigaShellCloseAppBridge(const char* reason) {
+  AppStopRequest request = {};
+  copyText(request.reason, sizeof(request.reason), (reason != nullptr && reason[0] != '\0') ? reason : "amiga_shell");
+  return runtimeStopAppWithLog(request, millis(), "amiga_shell_bridge");
+}
+
+AppRuntimeStatus amigaShellCurrentStatusBridge() {
+  return g_app_runtime_manager.current();
+}
+
+const AmigaAppRuntimeBridge kAmigaAppRuntimeBridge = {
+    amigaShellOpenAppBridge,
+    amigaShellCloseAppBridge,
+    amigaShellCurrentStatusBridge,
+};
+
 void clearRuntimeStaCredentials() {
   g_network_cfg.local_ssid[0] = '\0';
   g_network_cfg.local_password[0] = '\0';
@@ -4602,8 +4679,7 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
     copyText(request.id, sizeof(request.id), app_id);
     copyText(request.mode, sizeof(request.mode), mode);
     copyText(request.source, sizeof(request.source), "story_action");
-    const bool ok = g_app_runtime_manager.startApp(request, now_ms);
-    Serial.printf("[ACTION] OPEN_APP id=%s mode=%s ok=%u\n", request.id, request.mode, ok ? 1U : 0U);
+    const bool ok = runtimeStartAppWithLog(request, now_ms, "story_action");
     return ok;
   }
 
@@ -4613,8 +4689,7 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
     AppStopRequest request = {};
     copyText(request.id, sizeof(request.id), app_id);
     copyText(request.reason, sizeof(request.reason), reason);
-    const bool ok = g_app_runtime_manager.stopApp(request, now_ms);
-    Serial.printf("[ACTION] CLOSE_APP id=%s reason=%s ok=%u\n", request.id, request.reason, ok ? 1U : 0U);
+    const bool ok = runtimeStopAppWithLog(request, now_ms, "story_action");
     return ok;
   }
 
@@ -4633,11 +4708,7 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
     }
     copyText(app_action.payload, sizeof(app_action.payload), payload.c_str());
     copyText(app_action.content_type, sizeof(app_action.content_type), content_type);
-    const bool ok = g_app_runtime_manager.handleAction(app_action, now_ms);
-    Serial.printf("[ACTION] APP_ACTION id=%s action=%s ok=%u\n",
-                  app_action.id,
-                  app_action.name,
-                  ok ? 1U : 0U);
+    const bool ok = runtimeHandleActionWithLog(app_action, now_ms, "story_action");
     return ok;
   }
 
@@ -5456,7 +5527,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     copyText(request.id, sizeof(request.id), app_id.c_str());
     copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
     copyText(request.source, sizeof(request.source), "control");
-    const bool ok = g_app_runtime_manager.startApp(request, now_ms);
+    const bool ok = runtimeStartAppWithLog(request, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = g_app_runtime_manager.current().last_error;
     }
@@ -5474,7 +5545,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     }
     AppStopRequest request = {};
     copyText(request.reason, sizeof(request.reason), reason.c_str());
-    const bool ok = g_app_runtime_manager.stopApp(request, now_ms);
+    const bool ok = runtimeStopAppWithLog(request, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = "app_close_failed";
     }
@@ -5501,7 +5572,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     copyText(app_action.content_type,
              sizeof(app_action.content_type),
              (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain");
-    const bool ok = g_app_runtime_manager.handleAction(app_action, now_ms);
+    const bool ok = runtimeHandleActionWithLog(app_action, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = g_app_runtime_manager.current().last_error;
     }
@@ -6060,7 +6131,7 @@ void setupWebUiImpl() {
     copyText(request.id, sizeof(request.id), app_id.c_str());
     copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
     copyText(request.source, sizeof(request.source), source.isEmpty() ? "api" : source.c_str());
-    const bool ok = g_app_runtime_manager.startApp(request, millis());
+    const bool ok = runtimeStartAppWithLog(request, millis(), "web_api");
     StaticJsonDocument<256> response;
     response["ok"] = ok;
     response["id"] = request.id;
@@ -6087,7 +6158,7 @@ void setupWebUiImpl() {
     AppStopRequest request = {};
     copyText(request.id, sizeof(request.id), app_id.c_str());
     copyText(request.reason, sizeof(request.reason), reason.isEmpty() ? "api" : reason.c_str());
-    const bool ok = g_app_runtime_manager.stopApp(request, millis());
+    const bool ok = runtimeStopAppWithLog(request, millis(), "web_api");
     StaticJsonDocument<192> response;
     response["ok"] = ok;
     response["id"] = request.id;
@@ -6131,7 +6202,7 @@ void setupWebUiImpl() {
     copyText(action.name, sizeof(action.name), action_name.c_str());
     copyText(action.payload, sizeof(action.payload), payload.c_str());
     copyText(action.content_type, sizeof(action.content_type), content_type.c_str());
-    const bool ok = g_app_runtime_manager.handleAction(action, millis());
+    const bool ok = runtimeHandleActionWithLog(action, millis(), "web_api");
     StaticJsonDocument<256> response;
     response["ok"] = ok;
     response["id"] = action.id;
@@ -6941,6 +7012,7 @@ void handleSerialCommandImpl(const char* command_line, uint32_t now_ms) {
         "CAM_UI_SHOW CAM_UI_HIDE CAM_UI_TOGGLE CAM_REC_SNAP CAM_REC_SAVE [auto|bmp|jpg|raw] CAM_REC_GALLERY CAM_REC_NEXT CAM_REC_DELETE CAM_REC_STATUS "
         "QR_SIM <payload> "
         "MEDIA_LIST <picture|music|recorder> MEDIA_PLAY <path> MEDIA_STOP REC_START [seconds] [filename] REC_STOP REC_STATUS "
+        "APP_OPEN <id> [mode] APP_CLOSE [reason] APP_ACTION <name> [payload] APP_STATUS "
         "BOOT_MODE_STATUS BOOT_MODE_SET <STORY|MEDIA_MANAGER> BOOT_MODE_CLEAR "
         "NET_STATUS WIFI_STATUS WIFI_TEST WIFI_STA <ssid> <pass> WIFI_CONNECT <ssid> <pass> WIFI_PROVISION <ssid> <pass> WIFI_FORGET WIFI_DISCONNECT "
         "AUTH_STATUS AUTH_TOKEN_ROTATE [token] "
@@ -7331,6 +7403,8 @@ void handleSerialCommandImpl(const char* command_line, uint32_t now_ms) {
       std::strcmp(command, "CAM_REC_DELETE") == 0 || std::strcmp(command, "MEDIA_LIST") == 0 ||
       std::strcmp(command, "MEDIA_PLAY") == 0 || std::strcmp(command, "MEDIA_STOP") == 0 ||
       std::strcmp(command, "REC_START") == 0 || std::strcmp(command, "REC_STOP") == 0 ||
+      std::strcmp(command, "APP_OPEN") == 0 || std::strcmp(command, "APP_CLOSE") == 0 ||
+      std::strcmp(command, "APP_ACTION") == 0 || std::strcmp(command, "APP_STATUS") == 0 ||
       std::strcmp(command, "SCENE_GOTO") == 0 || std::strcmp(command, "QR_SIM") == 0 ||
       std::strcmp(command, "BOOT_MODE_STATUS") == 0 || std::strcmp(command, "BOOT_MODE_SET") == 0 ||
       std::strcmp(command, "BOOT_MODE_CLEAR") == 0) {
@@ -7807,6 +7881,15 @@ void setup() {
     Serial.println("[MAIN] SD story sync disabled on boot (LittleFS is primary)");
   }
   RuntimeConfigService::load(g_storage, &g_network_cfg, &g_hardware_cfg, &g_camera_cfg, &g_media_cfg);
+  if (kSprintDiagMode) {
+    if (g_hardware_cfg.telemetry_period_ms < kSprintDiagTelemetryMinMs) {
+      g_hardware_cfg.telemetry_period_ms = kSprintDiagTelemetryMinMs;
+    }
+    g_network_cfg.espnow_enabled_on_boot = false;
+    g_espnow_discovery_runtime_enabled = false;
+    Serial.printf("[DIAG] sprint_mode=1 telemetry_ms=%lu espnow_boot=0 discovery_runtime=0\n",
+                  static_cast<unsigned long>(g_hardware_cfg.telemetry_period_ms));
+  }
   loadBootProvisioningState();
   loadEspNowDeviceNameFromNvs();
   g_file_share_service.begin(g_network_cfg.hostname, g_espnow_device_name);
@@ -7881,7 +7964,7 @@ void setup() {
                                    g_network_cfg.force_ap_if_not_local,
                                    g_network_cfg.local_retry_ms,
                                    g_network_cfg.pause_local_retry_when_ap_client);
-    if (g_setup_mode && g_network_cfg.ap_default_ssid[0] != '\0') {
+    if ((g_setup_mode || kSprintDiagMode) && g_network_cfg.ap_default_ssid[0] != '\0') {
       g_network.startAp(g_network_cfg.ap_default_ssid, g_network_cfg.ap_default_password);
     }
     if (g_network_cfg.local_ssid[0] != '\0') {
@@ -7911,22 +7994,29 @@ void setup() {
   } else {
     Serial.println("[WEB] disabled (espnow_only_mode=1)");
   }
-  if (!g_scenario.begin(kDefaultScenarioFile)) {
-    Serial.println("[MAIN] scenario init failed");
-  }
-  if (kForceTestLabSceneLock) {
-    const bool routed = g_scenario.gotoScene(kTestLabSceneId, millis(), "boot_force_test_lab");
-    Serial.printf("[BOOT] route test_lab scene=%s ok=%u lock=1\n", kTestLabSceneId, routed ? 1U : 0U);
-  } else if (g_boot_media_manager_mode) {
-    const bool routed = g_scenario.gotoScene(kMediaManagerSceneId, millis(), "boot_mode_media_manager");
-    Serial.printf("[BOOT] route media_manager scene=%s ok=%u\n", kMediaManagerSceneId, routed ? 1U : 0U);
-  } else {
-    const bool routed = g_scenario.gotoScene(kDefaultBootSceneId, millis(), "boot_story_default");
-    Serial.printf("[BOOT] route default scene=%s ok=%u\n", kDefaultBootSceneId, routed ? 1U : 0U);
-  }
+  // Scenario loading disabled to boot directly to Amiga UI Shell grid launcher
+  // if (!g_scenario.begin(kDefaultScenarioFile)) {
+  //   Serial.println("[MAIN] scenario init failed");
+  // }
+  // Boot routing disabled - using AmigaUIShell instead
+  // if (kForceTestLabSceneLock) {
+  //   const bool routed = g_scenario.gotoScene(kTestLabSceneId, millis(), "boot_force_test_lab");
+  //   Serial.printf("[BOOT] route test_lab scene=%s ok=%u lock=1\n", kTestLabSceneId, routed ? 1U : 0U);
+  // } else if (g_boot_media_manager_mode) {
+  //   const bool routed = g_scenario.gotoScene(kMediaManagerSceneId, millis(), "boot_mode_media_manager");
+  //   Serial.printf("[BOOT] route media_manager scene=%s ok=%u\n", kMediaManagerSceneId, routed ? 1U : 0U);
+  // } else {
+  //   const bool routed = g_scenario.gotoScene(kDefaultBootSceneId, millis(), "boot_story_default");
+  //   Serial.printf("[BOOT] route default scene=%s ok=%u\n", kDefaultBootSceneId, routed ? 1U : 0U);
+  // }
   g_last_action_step_key[0] = '\0';
 
   g_ui.begin();
+  
+  // Initialize Amiga UI Shell for grid-based app launcher
+  g_amiga_shell.init(&g_hardware, &g_ui, &g_app_registry);
+  g_amiga_shell.onStart();
+  
   applyLcdBacklight(g_lcd_backlight_level);
   g_ui.setHardwareController(&g_hardware);
   UiLaMetrics boot_la_metrics = {};
@@ -7946,8 +8036,9 @@ void setup() {
 #endif
   g_camera_scene_active = false;
   g_camera_scene_ready = ensureCameraUiInitialized();
-  refreshSceneIfNeeded(true);
-  startPendingAudioIfAny();
+  // Boot directly to Amiga UI Shell (skip default scenario rendering)
+  // refreshSceneIfNeeded(true);
+  // startPendingAudioIfAny();
 
   g_runtime_services.audio = &g_audio;
   g_runtime_services.scenario = &g_scenario;
@@ -7977,6 +8068,7 @@ void setup() {
   app_context.ui = &g_ui;
   app_context.resource = &g_resource_coordinator;
   g_app_runtime_manager.configure(&g_app_registry, app_context);
+  g_amiga_shell.setRuntimeBridge(&kAmigaAppRuntimeBridge);
 
   g_app_coordinator.begin(&g_runtime_services);
 }
@@ -8031,6 +8123,14 @@ void runRuntimeIteration(uint32_t now_ms) {
 
   const uint32_t network_started_us = perfMonitor().beginSample();
   g_network.update(now_ms);
+  if (kSprintDiagMode && !g_diag_ap_stopped) {
+    const NetworkManager::Snapshot net_snapshot = g_network.snapshot();
+    if (net_snapshot.sta_connected && net_snapshot.ap_enabled) {
+      g_network.stopAp();
+      g_diag_ap_stopped = true;
+      Serial.println("[DIAG] AP auto-stop after STA connect");
+    }
+  }
   g_file_share_service.update(now_ms);
   maybeRunEspNowDiscoveryRuntime(now_ms);
   perfMonitor().endSample(PerfSection::kNetworkUpdate, network_started_us);
@@ -8185,7 +8285,7 @@ void runRuntimeIteration(uint32_t now_ms) {
   applyMicRuntimePolicy();
   RuntimeMetrics::instance().noteUiFrame(now_ms);
   perfMonitor().endSample(PerfSection::kUiTick, ui_started_us);
-  RuntimeMetrics::instance().logPeriodic(now_ms);
+  RuntimeMetrics::instance().logPeriodic(now_ms, kMetricsLogPeriodMs);
   if (g_web_started) {
     g_web_server.handleClient();
     if (g_web_disconnect_sta_pending &&
