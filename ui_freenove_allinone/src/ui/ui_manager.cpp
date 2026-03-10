@@ -471,6 +471,46 @@ constexpr const char* kWinEtapeDemoTitle = "BRAVO Brigade Z";
 constexpr const char* kWinEtapeDemoScroll =
     "Vous n’avez plus qu’a valider sur le téléphone qui sonne";
 constexpr const char* kWinEtapeWaitingSubtitle = "Validation par reponse au telephone";
+
+constexpr const char* kMediaManagerSpecApps[] = {
+    "Lecteur Audio",
+    "appareil photo/video",
+    "dicataphone",
+    "chronometre / minuteur",
+    "lampe de poche",
+    "calculatrice",
+    "webradio enfants",
+    "podcast enfants",
+    "emulateur de jeux video",
+    "lecteur de livres audio",
+    "application de dessin",
+    "application de coloriage",
+    "application de musique pour enfants",
+    "application de yoga pour enfants",
+    "application de meditation pour enfants",
+    "application de langues pour enfants",
+    "application de mathematiques pour enfants",
+    "application de sciences pour enfants",
+    "application de geographie pour enfants",
+};
+
+constexpr size_t kMediaManagerSpecAppCount = sizeof(kMediaManagerSpecApps) / sizeof(kMediaManagerSpecApps[0]);
+constexpr uint32_t kMediaManagerSpecRotateMs = 3000U;
+
+String mediaManagerSpecSubtitle(uint32_t now_ms) {
+  if (kMediaManagerSpecAppCount == 0U) {
+    return String();
+  }
+  const size_t index = static_cast<size_t>((now_ms / kMediaManagerSpecRotateMs) % kMediaManagerSpecAppCount);
+  String subtitle;
+  subtitle.reserve(160);
+  subtitle += String(static_cast<unsigned int>(index + 1U));
+  subtitle += "/";
+  subtitle += String(static_cast<unsigned int>(kMediaManagerSpecAppCount));
+  subtitle += " - ";
+  subtitle += kMediaManagerSpecApps[index];
+  return subtitle;
+}
 constexpr const char* kWinEtapeFxScrollTextA =
     "DEMO MODE - BRAVO BRIGADE Z - LE MYSTERE DU PROFESSEUR ZACUS - ";
 constexpr const char* kWinEtapeFxScrollTextB =
@@ -4168,6 +4208,7 @@ void UiManager::renderScene(const ScenarioDef* scenario,
   uint32_t accent_rgb = 0x2A76FFUL;
   uint32_t text_rgb = 0xE8F1FFUL;
   const bool uson_proto_scene = (std::strcmp(scene_id, "SCENE_U_SON_PROTO") == 0);
+  const bool media_manager_scene = (std::strcmp(scene_id, "ZACUS_U-SON") == 0);
   if (uson_proto_scene) {
     use_lgfx_text_overlay = fx_engine_.config().lgfx_backend;
     lgfx_hard_mode = true;
@@ -4197,7 +4238,7 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     bg_rgb = 0x07070FUL;
     accent_rgb = 0xFFB74EUL;
     text_rgb = 0xF6FBFFUL;
-  } else if (std::strcmp(scene_id, "SCENE_BROKEN") == 0 || std::strcmp(scene_id, "SCENE_U_SON_PROTO") == 0) {
+  } else if (std::strcmp(scene_id, "SCENE_U_SON_PROTO") == 0) {
     title = "PROTO U-SON";
     subtitle = "Signal brouille / transmission active";
     symbol = "ALERT";
@@ -4209,36 +4250,6 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     subtitle_align = SceneTextAlign::kBottom;
     symbol_align = SceneTextAlign::kTop;
     symbol_align_token = "top";
-  } else if (std::strcmp(scene_id, "SCENE_TEST_LAB") == 0) {
-    title = "MIRE COULEUR";
-    subtitle = "NOIR | BLANC | ROUGE | VERT | BLEU | CYAN | MAGENTA | JAUNE";
-    symbol = "";
-    effect = SceneEffect::kNone;
-    show_title = true;
-    show_subtitle = true;
-    show_symbol = false;
-    bg_rgb = 0x000000UL;
-    accent_rgb = 0x888888UL;
-    text_rgb = 0xFFFFFFUL;
-    transition = SceneTransition::kNone;
-    transition_ms = 0U;
-    waveform_enabled = false;
-    demo_mode = "standard";
-    demo_particle_count = 0U;
-    demo_strobe_level = 0U;
-    la_detection_scene_ = false;
-  } else if (std::strcmp(scene_id, "SCENE_WARNING") == 0) {
-    title = "ALERTE";
-    subtitle = "Signal anormal";
-    symbol = "WARN";
-    effect = SceneEffect::kBlink;
-    bg_rgb = 0x261209UL;
-    accent_rgb = 0xFF9A4AUL;
-    text_rgb = 0xFFFFFFUL;
-    warning_lgfx_only = true;
-    warning_siren = true;
-    warning_gyrophare_enabled = true;
-    warning_gyrophare_disable_direct_fx = true;
   } else if (std::strcmp(scene_id, "SCENE_LA_DETECTOR") == 0 || std::strcmp(scene_id, "SCENE_SEARCH") == 0) {
     title = "recherche d'accordance";
     subtitle = "Balayage en cours";
@@ -4263,88 +4274,16 @@ void UiManager::renderScene(const ScenarioDef* scenario,
       show_symbol = false;
       symbol = "";
     }
-  } else if (std::strcmp(scene_id, "SCENE_LEFOU_DETECTOR") == 0) {
-    title = "DETECTEUR LEFOU";
-    subtitle = "Analyse en cours";
-    symbol = "AUDIO";
-    effect = SceneEffect::kWave;
-    bg_rgb = 0x071B1AUL;
-    accent_rgb = 0x46E6C8UL;
-    text_rgb = 0xE9FFF9UL;
-    show_title = true;
-    show_subtitle = true;
-    show_symbol = true;
-  } else if (std::strcmp(scene_id, "SCENE_CAMERA_SCAN") == 0 || std::strcmp(scene_id, "SCENE_QR_DETECTOR") == 0) {
-    title = "ZACUS QR VALIDATION";
-    subtitle = "Scan du QR final";
-    symbol = "QR";
-    effect = SceneEffect::kNone;
-    transition = SceneTransition::kFade;
-    transition_ms = 180U;
-    bg_rgb = 0x102040UL;
-    accent_rgb = 0x5CA3FFUL;
-    text_rgb = 0xF3F7FFUL;
-    show_title = true;
-    show_subtitle = true;
-    show_symbol = true;
-    waveform_enabled = false;
-  } else if (std::strcmp(scene_id, "SCENE_MEDIA_MANAGER") == 0) {
+  } else if (media_manager_scene) {
     title = "MEDIA MANAGER";
-    subtitle = "PHOTO / MP3 / STORY";
-    symbol = "MEDIA";
+    subtitle = mediaManagerSpecSubtitle(millis());
+    symbol = "";
     effect = SceneEffect::kRadar;
     bg_rgb = 0x081A34UL;
     accent_rgb = 0x8BC4FFUL;
     text_rgb = 0xEAF6FFUL;
     show_title = true;
     show_subtitle = true;
-    show_symbol = true;
-  } else if (std::strcmp(scene_id, "SCENE_PHOTO_MANAGER") == 0) {
-    title = "PHOTO MANAGER";
-    subtitle = "Capture JPEG";
-    symbol = "PHOTO";
-    effect = SceneEffect::kNone;
-    bg_rgb = 0x0B1A2EUL;
-    accent_rgb = 0x86CCFFUL;
-    text_rgb = 0xEEF6FFUL;
-    show_title = true;
-    show_subtitle = true;
-    show_symbol = true;
-  } else if (std::strcmp(scene_id, "SCENE_SIGNAL_SPIKE") == 0) {
-    title = "PIC DE SIGNAL";
-    subtitle = "Interference detectee";
-    symbol = "ALERT";
-    effect = SceneEffect::kWave;
-    bg_rgb = 0x24090CUL;
-    accent_rgb = 0xFF6A52UL;
-    text_rgb = 0xFFF2EBUL;
-  } else if (std::strcmp(scene_id, "SCENE_WIN") == 0 ||
-             std::strcmp(scene_id, "SCENE_REWARD") == 0 ||
-             std::strcmp(scene_id, "SCENE_WINNER") == 0) {
-    title = "VICTOIRE";
-    symbol = "WIN";
-    effect = (std::strcmp(scene_id, "SCENE_WINNER") == 0) ? SceneEffect::kNone : SceneEffect::kCelebrate;
-    bg_rgb = 0x231038UL;
-    accent_rgb = 0xF4CB4AUL;
-    text_rgb = 0xFFF6C7UL;
-    subtitle = (std::strcmp(scene_id, "SCENE_WINNER") == 0) ? "Mode Winner actif" : "Etape validee";
-  } else if (std::strcmp(scene_id, "SCENE_FIREWORKS") == 0) {
-    title = "FIREWORKS";
-    subtitle = "Mode celebration";
-    symbol = "WIN";
-    effect = SceneEffect::kNone;
-    bg_rgb = 0x120825UL;
-    accent_rgb = 0xFFB65CUL;
-    text_rgb = 0xFFF4E6UL;
-    demo_mode = "fireworks";
-  } else if (std::strcmp(scene_id, "SCENE_MP3_PLAYER") == 0) {
-    title = "LECTEUR MP3";
-    subtitle = "AmigaAMP";
-    symbol = "PLAY";
-    effect = SceneEffect::kNone;
-    bg_rgb = 0x101A36UL;
-    accent_rgb = 0x66B4FFUL;
-    text_rgb = 0xF3F9FFUL;
     show_symbol = false;
   } else if (std::strcmp(scene_id, "SCENE_WIN_ETAPE") == 0 ||
              std::strcmp(scene_id, "SCENE_WIN_ETAPE1") == 0 ||
@@ -4387,25 +4326,6 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     show_subtitle = true;
     show_symbol = true;
     subtitle_align = SceneTextAlign::kCenter;
-  } else if (std::strcmp(scene_id, "SCENE_FINAL_WIN") == 0) {
-    title = "FINAL WIN";
-    subtitle = "Mission accomplie";
-    symbol = "WIN";
-    effect = SceneEffect::kCelebrate;
-    bg_rgb = 0x1C0C2EUL;
-    accent_rgb = 0xFFCC5CUL;
-    text_rgb = 0xFFF7E4UL;
-    show_title = true;
-    show_subtitle = true;
-    show_symbol = true;
-  } else if (std::strcmp(scene_id, "SCENE_READY") == 0 || std::strcmp(scene_id, "SCENE_MEDIA_ARCHIVE") == 0) {
-    title = "PRET";
-    subtitle = "Scenario termine";
-    symbol = "READY";
-    effect = SceneEffect::kWave;
-    bg_rgb = 0x0F2A12UL;
-    accent_rgb = 0x6CD96BUL;
-    text_rgb = 0xE8FFE7UL;
   }
 
   if (!parse_payload_this_frame && scene_status_.valid &&
@@ -4433,6 +4353,15 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     symbol_font_face = overlay_symbol_font_face_;
   }
 
+  if (media_manager_scene) {
+    title = "MEDIA MANAGER";
+    subtitle = mediaManagerSpecSubtitle(millis());
+    symbol = "";
+    show_title = true;
+    show_subtitle = true;
+    show_symbol = false;
+  }
+
   if (static_state_changed) {
     resetSceneTimeline();
   }
@@ -4441,7 +4370,7 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     qr_rules_.clear();
   }
 
-  if (parse_payload_this_frame && screen_payload_json != nullptr && screen_payload_json[0] != '\0') {
+  if (!media_manager_scene && parse_payload_this_frame && screen_payload_json != nullptr && screen_payload_json[0] != '\0') {
     DynamicJsonDocument document(4096);
     const DeserializationError error = deserializeJson(document, screen_payload_json);
     if (!error) {

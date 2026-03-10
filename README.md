@@ -9,6 +9,14 @@ La détection est basée sur pyserial et l’ID USB (Freenove, ESP32, ESP8266, R
 
 Pour forcer un build/flash spécifique : ./tools/dev/cockpit.sh flash <env>
 
+## Statut Freenove ESP32-S3 (2026-03-01)
+
+- Build firmware: OK (`freenove_esp32s3_full_with_ui`)
+- Build/flash LittleFS: OK
+- Flash firmware: OK
+- Smoke série runtime: KO (reboot loop `rst:0x3`, `Saved PC:0x403cdb0a`)
+- Détail et plan de debug: `README_ESP32_ZACUS.md`
+
 # Hardware Firmware
 
 > **[Mise à jour 2026]**

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "app_streams.schema",
+  "title": "App Streams",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "streams"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "streams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url",
+          "timeout_ms",
+          "retry_count",
+          "codec"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 100
+          },
+          "retry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "codec": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
+

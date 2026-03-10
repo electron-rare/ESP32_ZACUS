@@ -53,7 +53,7 @@ constexpr HardwareManager::LedPaletteEntry kLedPalette[] = {
     {"SCENE_REWARD", 245U, 205U, 62U, 80U, true},
     {"SCENE_READY", 18U, 45U, 95U, 52U, false},
     {"SCENE_MP3_PLAYER", 18U, 45U, 95U, 52U, false},
-    {"SCENE_MEDIA_MANAGER", 18U, 45U, 95U, 52U, false},
+    {"ZACUS_U-SON", 18U, 45U, 95U, 52U, false},
     {"SCENE_PHOTO_MANAGER", 18U, 45U, 95U, 52U, false},
     {"SCENE_CAMERA_SCAN", 18U, 45U, 95U, 52U, false},
     {"SCENE_QR_DETECTOR", 18U, 45U, 95U, 52U, false},

@@ -11,6 +11,7 @@ class Audio;
 class AudioManager {
  public:
   using AudioDoneCallback = void (*)(const char* track, void* ctx);
+  using AudioMetadataCallback = void (*)(const char* key, const char* value, void* ctx);
 
   AudioManager();
   ~AudioManager();
@@ -21,6 +22,7 @@ class AudioManager {
 
   bool begin();
   bool play(const char* filename);
+  bool playUrl(const char* url);
   bool playDiagnosticTone();
   void stop();
   void update();
@@ -42,6 +44,8 @@ class AudioManager {
   uint32_t underrunCount() const;
 
   void setAudioDoneCallback(AudioDoneCallback cb, void* ctx);
+  void setMetadataCallback(AudioMetadataCallback cb, void* ctx);
+  void notifyMetadata(const char* key, const char* value);
 
  private:
   enum class AudioCodec : uint8_t {
@@ -54,6 +58,7 @@ class AudioManager {
 
   bool ensurePlayer();
   bool requestPlay(const char* filename, bool diagnostic_tone);
+  bool requestPlayUrl(const char* url);
   void applyOutputProfile();
   void applyFxProfile();
   bool normalizeTrackPath(const char* input, String& out_path, bool& out_use_sd) const;
@@ -113,4 +118,7 @@ class AudioManager {
   mutable char current_track_snapshot_[96] = {0};
   AudioDoneCallback done_cb_ = nullptr;
   void* done_ctx_ = nullptr;
+  AudioMetadataCallback metadata_cb_ = nullptr;
+  void* metadata_ctx_ = nullptr;
+  String last_stream_url_;
 };

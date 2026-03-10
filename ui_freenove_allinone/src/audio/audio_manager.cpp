@@ -196,7 +196,27 @@ struct AudioDoneEvent {
   char track[kAudioDoneTrackLen];
 };
 
+AudioManager* g_audio_manager_instance = nullptr;
+
 }  // namespace
+
+void audio_showstation(const char* info) {
+  if (g_audio_manager_instance != nullptr) {
+    g_audio_manager_instance->notifyMetadata("station", info != nullptr ? info : "");
+  }
+}
+
+void audio_showstreamtitle(const char* info) {
+  if (g_audio_manager_instance != nullptr) {
+    g_audio_manager_instance->notifyMetadata("title", info != nullptr ? info : "");
+  }
+}
+
+void audio_info(const char* info) {
+  if (g_audio_manager_instance != nullptr) {
+    g_audio_manager_instance->notifyMetadata("info", info != nullptr ? info : "");
+  }
+}
 
 struct AudioManager::AudioRtosState {
 #if defined(ARDUINO_ARCH_ESP32)
@@ -219,6 +239,9 @@ AudioManager::~AudioManager() {
     releaseStateLock();
   }
   player_.reset();
+  if (g_audio_manager_instance == this) {
+    g_audio_manager_instance = nullptr;
+  }
   destroyRtosState();
 }
 
@@ -389,6 +412,10 @@ bool AudioManager::ensurePlayer() {
   if (player_) {
     return true;
   }
+  if (!psramFound()) {
+    Serial.println("[AUDIO] player disabled: PSRAM not detected");
+    return false;
+  }
   player_ = std::unique_ptr<Audio>(new Audio());
   if (!player_) {
     Serial.println("[AUDIO] alloc failed for ESP32-audioI2S player");
@@ -415,6 +442,7 @@ bool AudioManager::begin() {
     return false;
   }
   begun_ = true;
+  g_audio_manager_instance = this;
   pump_task_enabled_ = startAudioPump();
   Serial.printf("[AUDIO] backend=ESP32-audioI2S profile=%u:%s fx=%u:%s vol=%u\n",
                 output_profile_,
@@ -634,6 +662,7 @@ bool AudioManager::requestPlay(const char* filename, bool diagnostic_tone) {
   if (!trackExists(normalized_path, use_sd)) {
     return false;
   }
+  last_stream_url_.remove(0);
 
   AudioCodec codec = AudioCodec::kUnknown;
   uint16_t bitrate_kbps = 0U;
@@ -677,6 +706,46 @@ bool AudioManager::requestPlay(const char* filename, bool diagnostic_tone) {
 
 bool AudioManager::play(const char* filename) {
   return requestPlay(filename, false);
+}
+
+bool AudioManager::requestPlayUrl(const char* url) {
+  if (url == nullptr || url[0] == '\0') {
+    return false;
+  }
+  if (!takeStateLock(kAudioStateLockTimeoutMs)) {
+    return false;
+  }
+  if (!ensurePlayer()) {
+    releaseStateLock();
+    return false;
+  }
+  pending_start_ = false;
+  pending_track_.remove(0);
+  pending_diagnostic_tone_ = false;
+  if (player_->isRunning() || playing_) {
+    player_->stopSong();
+    clearTrackState();
+  }
+  if (!player_->connecttohost(url)) {
+    releaseStateLock();
+    Serial.printf("[AUDIO] connecttohost failed url=%s\n", url);
+    return false;
+  }
+  current_track_ = url;
+  last_stream_url_ = url;
+  active_codec_ = AudioCodec::kUnknown;
+  active_bitrate_kbps_ = 0U;
+  active_use_sd_ = false;
+  using_diagnostic_tone_ = false;
+  playing_ = true;
+  reopen_earliest_ms_ = 0U;
+  releaseStateLock();
+  notifyMetadata("url", url);
+  return true;
+}
+
+bool AudioManager::playUrl(const char* url) {
+  return requestPlayUrl(url);
 }
 
 bool AudioManager::playDiagnosticTone() {
@@ -959,6 +1028,29 @@ void AudioManager::setAudioDoneCallback(AudioDoneCallback cb, void* ctx) {
   done_cb_ = cb;
   done_ctx_ = ctx;
   releaseStateLock();
+}
+
+void AudioManager::setMetadataCallback(AudioMetadataCallback cb, void* ctx) {
+  if (!takeStateLock(kAudioStateLockTimeoutMs)) {
+    return;
+  }
+  metadata_cb_ = cb;
+  metadata_ctx_ = ctx;
+  releaseStateLock();
+}
+
+void AudioManager::notifyMetadata(const char* key, const char* value) {
+  if (!takeStateLock(kAudioStateLockTimeoutMs)) {
+    return;
+  }
+  AudioMetadataCallback cb = metadata_cb_;
+  void* ctx = metadata_ctx_;
+  releaseStateLock();
+  if (cb != nullptr) {
+    cb(key != nullptr ? key : "",
+       value != nullptr ? value : "",
+       ctx);
+  }
 }
 
 void AudioManager::applyOutputProfile() {

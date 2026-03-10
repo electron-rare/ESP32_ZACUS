@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "app_progress.schema",
+  "title": "App Progress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "updated_at_ms",
+    "cursor"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "bookmarks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}
+

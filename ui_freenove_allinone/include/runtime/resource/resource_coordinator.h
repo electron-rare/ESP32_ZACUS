@@ -7,6 +7,17 @@ struct UiMemorySnapshot;
 
 namespace runtime::resource {
 
+enum class ResourceCapability : uint32_t {
+  kAudioOut = 1UL << 0,
+  kAudioIn = 1UL << 1,
+  kCamera = 1UL << 2,
+  kLed = 1UL << 3,
+  kWifi = 1UL << 4,
+  kStorageSd = 1UL << 5,
+  kStorageFs = 1UL << 6,
+  kGpuUi = 1UL << 7,
+};
+
 enum class ResourceProfile : uint8_t {
   kGfxFocus = 0,
   kGfxPlusMic,
@@ -60,6 +71,9 @@ class ResourceCoordinator {
   bool shouldForceMicOn() const;
   bool allowsCameraWork() const;
   bool approveCameraOperation();
+  bool allowsCapability(ResourceCapability capability) const;
+  uint32_t capabilityMask() const;
+  static const char* capabilityName(ResourceCapability capability);
   ResourceCoordinatorSnapshot snapshot() const;
 
  private:

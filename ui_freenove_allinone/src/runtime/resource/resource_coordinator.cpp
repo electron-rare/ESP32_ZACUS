@@ -175,6 +175,81 @@ bool ResourceCoordinator::approveCameraOperation() {
   return allowed;
 }
 
+bool ResourceCoordinator::allowsCapability(ResourceCapability capability) const {
+  switch (capability) {
+    case ResourceCapability::kAudioOut:
+      return true;
+    case ResourceCapability::kAudioIn:
+      return shouldRunMic() || profile() == ResourceProfile::kGfxPlusMic;
+    case ResourceCapability::kCamera:
+      return allowsCameraWork();
+    case ResourceCapability::kLed:
+      return true;
+    case ResourceCapability::kWifi:
+      return true;
+    case ResourceCapability::kStorageSd:
+      return true;
+    case ResourceCapability::kStorageFs:
+      return true;
+    case ResourceCapability::kGpuUi:
+      return true;
+    default:
+      return false;
+  }
+}
+
+uint32_t ResourceCoordinator::capabilityMask() const {
+  uint32_t mask = 0U;
+  if (allowsCapability(ResourceCapability::kAudioOut)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kAudioOut);
+  }
+  if (allowsCapability(ResourceCapability::kAudioIn)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kAudioIn);
+  }
+  if (allowsCapability(ResourceCapability::kCamera)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kCamera);
+  }
+  if (allowsCapability(ResourceCapability::kLed)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kLed);
+  }
+  if (allowsCapability(ResourceCapability::kWifi)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kWifi);
+  }
+  if (allowsCapability(ResourceCapability::kStorageSd)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kStorageSd);
+  }
+  if (allowsCapability(ResourceCapability::kStorageFs)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kStorageFs);
+  }
+  if (allowsCapability(ResourceCapability::kGpuUi)) {
+    mask |= static_cast<uint32_t>(ResourceCapability::kGpuUi);
+  }
+  return mask;
+}
+
+const char* ResourceCoordinator::capabilityName(ResourceCapability capability) {
+  switch (capability) {
+    case ResourceCapability::kAudioOut:
+      return "CAP_AUDIO_OUT";
+    case ResourceCapability::kAudioIn:
+      return "CAP_AUDIO_IN";
+    case ResourceCapability::kCamera:
+      return "CAP_CAMERA";
+    case ResourceCapability::kLed:
+      return "CAP_LED";
+    case ResourceCapability::kWifi:
+      return "CAP_WIFI";
+    case ResourceCapability::kStorageSd:
+      return "CAP_STORAGE_SD";
+    case ResourceCapability::kStorageFs:
+      return "CAP_STORAGE_FS";
+    case ResourceCapability::kGpuUi:
+      return "CAP_GPU_UI";
+    default:
+      return "CAP_UNKNOWN";
+  }
+}
+
 ResourceCoordinatorSnapshot ResourceCoordinator::snapshot() const {
   return snapshot_;
 }

@@ -1,2 +1,0 @@
-[console_scripts]
-story-gen = zacus_story_gen_ai.cli:main

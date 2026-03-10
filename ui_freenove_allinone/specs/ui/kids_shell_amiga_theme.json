@@ -1,0 +1,48 @@
+{
+  "theme_id": "kids_amiga_shell_v1",
+  "design_direction": {
+    "inspiration": "amiga_retro_demoscene",
+    "audience": "children",
+    "style_keywords": [
+      "colorful",
+      "playful",
+      "high_contrast",
+      "rounded_icons",
+      "arcade_motion"
+    ]
+  },
+  "palette": {
+    "bg_primary": "#0A1030",
+    "bg_secondary": "#132A63",
+    "accent_cyan": "#42E8FF",
+    "accent_yellow": "#FFD84D",
+    "accent_green": "#7DFF6B",
+    "accent_orange": "#FF9A3D",
+    "text_primary": "#F5FBFF",
+    "text_muted": "#C9E3FF"
+  },
+  "typography": {
+    "title_font": "Bungee",
+    "body_font": "IBM Plex Mono",
+    "symbol_font": "Orbitron"
+  },
+  "layout": {
+    "home_grid_columns": 4,
+    "home_grid_rows": 3,
+    "card_corner_radius": 12,
+    "touch_target_px": 56
+  },
+  "motion": {
+    "page_intro_ms": 280,
+    "card_hover_ms": 160,
+    "scene_transition_ms": 220,
+    "max_non_blocking_frame_ms": 8
+  },
+  "ux_rules": {
+    "max_actions_to_primary_goal": 2,
+    "always_show_back_home": true,
+    "use_icon_plus_label": true,
+    "short_text_only": true
+  }
+}
+

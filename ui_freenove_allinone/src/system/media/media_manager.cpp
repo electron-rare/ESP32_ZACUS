@@ -1,17 +1,26 @@
-// media_manager.cpp - media catalog + playback + simulated recorder hooks.
+// media_manager.cpp - media catalog + playback + native I2S recorder hooks.
 #include "media_manager.h"
 
 #include <ArduinoJson.h>
 #include <FS.h>
 #include <LittleFS.h>
+#include <driver/i2s.h>
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <vector>
 
 #include "audio_manager.h"
+#include "ui_freenove_config.h"
 
 namespace {
+
+constexpr i2s_port_t kRecorderPort = I2S_NUM_1;
+constexpr uint32_t kRecorderSampleRate = 16000UL;
+constexpr uint16_t kRecorderBits = 16U;
+constexpr uint16_t kRecorderChannels = 1U;
+constexpr uint32_t kRecorderCapturePeriodMs = 30U;
+constexpr size_t kRecorderRawSamples = 256U;
 
 void copyText(char* out, size_t out_size, const char* text) {
   if (out == nullptr || out_size == 0U) {
@@ -110,6 +119,7 @@ bool MediaManager::begin(const Config& config) {
 
   snapshot_ = Snapshot();
   snapshot_.ready = true;
+  snapshot_.record_simulated = false;
   snapshot_.record_limit_seconds = config_.record_max_seconds;
   copyText(snapshot_.music_dir, sizeof(snapshot_.music_dir), config_.music_dir);
   copyText(snapshot_.picture_dir, sizeof(snapshot_.picture_dir), config_.picture_dir);
@@ -126,6 +136,10 @@ void MediaManager::update(uint32_t now_ms, AudioManager* audio) {
     snapshot_.playing_path[0] = '\0';
   }
   if (snapshot_.recording) {
+    if (static_cast<int32_t>(now_ms - next_capture_ms_) >= 0) {
+      (void)appendRecordingChunk();
+      next_capture_ms_ = now_ms + kRecorderCapturePeriodMs;
+    }
     const uint32_t elapsed_ms = now_ms - snapshot_.record_started_ms;
     const uint16_t elapsed_seconds = static_cast<uint16_t>(elapsed_ms / 1000U);
     snapshot_.record_elapsed_seconds = elapsed_seconds;
@@ -247,7 +261,7 @@ bool MediaManager::startRecording(uint16_t seconds, const char* filename_hint) {
 
   const String filename = sanitizeFilename(filename_hint, "record", ".wav");
   const String path = String(config_.record_dir) + "/" + filename;
-  if (!writeEmptyWav(path.c_str())) {
+  if (!openRecordingWav(path.c_str())) {
     setLastError("recorder_create_failed");
     return false;
   }
@@ -256,6 +270,7 @@ bool MediaManager::startRecording(uint16_t seconds, const char* filename_hint) {
   snapshot_.record_limit_seconds = seconds;
   snapshot_.record_started_ms = millis();
   snapshot_.record_elapsed_seconds = 0U;
+  next_capture_ms_ = snapshot_.record_started_ms;
   copyText(snapshot_.record_file, sizeof(snapshot_.record_file), path.c_str());
   clearLastError();
   return true;
@@ -264,6 +279,11 @@ bool MediaManager::startRecording(uint16_t seconds, const char* filename_hint) {
 bool MediaManager::stopRecording() {
   if (!snapshot_.recording) {
     return true;
+  }
+  (void)appendRecordingChunk();
+  if (!finalizeRecordingWav()) {
+    setLastError("recorder_finalize_failed");
+    return false;
   }
   const uint32_t elapsed_ms = millis() - snapshot_.record_started_ms;
   snapshot_.record_elapsed_seconds = static_cast<uint16_t>(elapsed_ms / 1000U);
@@ -352,23 +372,27 @@ bool MediaManager::ensureDir(const char* path) const {
   return LittleFS.mkdir(normalized.c_str());
 }
 
-bool MediaManager::writeEmptyWav(const char* path) const {
+bool MediaManager::openRecordingWav(const char* path) {
   if (path == nullptr || path[0] == '\0') {
     return false;
   }
-  File file = LittleFS.open(path, "w");
+  recording_file_.close();
+  recording_file_ = LittleFS.open(path, "w+");
+  if (!recording_file_) {
+    return false;
+  }
+  recording_data_bytes_ = 0U;
+  return writeWavHeader(recording_file_, 0U);
+}
+
+bool MediaManager::writeWavHeader(File& file, uint32_t data_size) const {
   if (!file) {
     return false;
   }
-
-  const uint32_t sample_rate = 16000UL;
-  const uint16_t channels = 1U;
-  const uint16_t bits_per_sample = 16U;
-  const uint32_t data_size = 0UL;
-  const uint32_t byte_rate = sample_rate * channels * (bits_per_sample / 8U);
-  const uint16_t block_align = channels * (bits_per_sample / 8U);
+  const uint32_t byte_rate = kRecorderSampleRate * kRecorderChannels * (kRecorderBits / 8U);
+  const uint16_t block_align = kRecorderChannels * (kRecorderBits / 8U);
   const uint32_t chunk_size = 36UL + data_size;
-
+  file.seek(0);
   file.write(reinterpret_cast<const uint8_t*>("RIFF"), 4U);
   file.write(reinterpret_cast<const uint8_t*>(&chunk_size), sizeof(chunk_size));
   file.write(reinterpret_cast<const uint8_t*>("WAVE"), 4U);
@@ -377,13 +401,44 @@ bool MediaManager::writeEmptyWav(const char* path) const {
   const uint16_t audio_format = 1U;
   file.write(reinterpret_cast<const uint8_t*>(&fmt_size), sizeof(fmt_size));
   file.write(reinterpret_cast<const uint8_t*>(&audio_format), sizeof(audio_format));
-  file.write(reinterpret_cast<const uint8_t*>(&channels), sizeof(channels));
-  file.write(reinterpret_cast<const uint8_t*>(&sample_rate), sizeof(sample_rate));
+  file.write(reinterpret_cast<const uint8_t*>(&kRecorderChannels), sizeof(kRecorderChannels));
+  file.write(reinterpret_cast<const uint8_t*>(&kRecorderSampleRate), sizeof(kRecorderSampleRate));
   file.write(reinterpret_cast<const uint8_t*>(&byte_rate), sizeof(byte_rate));
   file.write(reinterpret_cast<const uint8_t*>(&block_align), sizeof(block_align));
-  file.write(reinterpret_cast<const uint8_t*>(&bits_per_sample), sizeof(bits_per_sample));
+  file.write(reinterpret_cast<const uint8_t*>(&kRecorderBits), sizeof(kRecorderBits));
   file.write(reinterpret_cast<const uint8_t*>("data"), 4U);
   file.write(reinterpret_cast<const uint8_t*>(&data_size), sizeof(data_size));
-  file.close();
   return true;
+}
+
+bool MediaManager::appendRecordingChunk() {
+  if (!recording_file_) {
+    return false;
+  }
+  int32_t raw[kRecorderRawSamples];
+  size_t bytes_read = 0U;
+  if (i2s_read(kRecorderPort, raw, sizeof(raw), &bytes_read, 0U) != ESP_OK || bytes_read == 0U) {
+    return true;
+  }
+  const size_t sample_count = bytes_read / sizeof(int32_t);
+  int16_t pcm[kRecorderRawSamples];
+  for (size_t i = 0U; i < sample_count; ++i) {
+    pcm[i] = static_cast<int16_t>(raw[i] >> 14U);
+  }
+  const size_t out_bytes = sample_count * sizeof(int16_t);
+  const size_t written = recording_file_.write(reinterpret_cast<const uint8_t*>(pcm), out_bytes);
+  if (written != out_bytes) {
+    return false;
+  }
+  recording_data_bytes_ += static_cast<uint32_t>(written);
+  return true;
+}
+
+bool MediaManager::finalizeRecordingWav() {
+  if (!recording_file_) {
+    return false;
+  }
+  const bool ok = writeWavHeader(recording_file_, recording_data_bytes_);
+  recording_file_.close();
+  return ok;
 }

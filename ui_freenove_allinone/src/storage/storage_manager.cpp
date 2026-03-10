@@ -24,6 +24,7 @@
 namespace {
 
 constexpr const char* kRequiredDirectories[] = {
+    "/apps",
     "/data",
     "/picture",
     "/music",
@@ -45,9 +46,79 @@ struct EmbeddedStoryAsset {
   const char* payload;
 };
 
+struct EmbeddedAppSeed {
+  const char* id;
+  const char* title;
+  const char* category;
+  const char* entry_screen;
+  bool enabled;
+  uint32_t required_capabilities;
+  uint32_t optional_capabilities;
+  bool supports_offline;
+  bool supports_streaming;
+};
+
+struct EmbeddedScreenSeed {
+  const char* id;
+  const char* title;
+  const char* subtitle;
+  const char* symbol;
+  const char* effect;
+  const char* bg;
+  const char* accent;
+  const char* text;
+};
+
 constexpr EmbeddedStoryAsset kEmbeddedStoryAssets[] = {
     {"/story/apps/APP_WIFI.json", R"JSON({"id":"APP_WIFI","app":"WIFI_STACK","config":{"hostname":"zacus-freenove","ap_policy":"if_no_known_wifi","pause_local_retry_when_ap_client":true,"local_retry_ms":15000,"ap_default_ssid":"Freenove-Setup"}})JSON"},
+    {"/story/screens/SCENE_READY.json", R"JSON({"id":"SCENE_READY","title":"ZACUS KIDS OS","subtitle":"[AUDIO] [CAMERA] [QR]\n[BOOK] [REC] [TIMER]\n[LIGHT] [CALC] [RADIO]","symbol":"APPS","effect":"scan","theme":{"bg":"#06153B","accent":"#FFD45E","text":"#EAF2FF"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_align":"top","subtitle_align":"center","title_font_face":"pressstart2p_24","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":420},"timeline":{"loop":true,"duration_ms":2400,"keyframes":[{"at_ms":0,"effect":"scan","speed_ms":420,"theme":{"bg":"#06153B","accent":"#FFD45E","text":"#EAF2FF"}},{"at_ms":1200,"effect":"pulse","speed_ms":320,"theme":{"bg":"#0A2158","accent":"#6FE7FF","text":"#F5FAFF"}},{"at_ms":2400,"effect":"scan","speed_ms":460,"theme":{"bg":"#06153B","accent":"#FFD45E","text":"#EAF2FF"}}]},"transition":{"effect":"slide_left","duration_ms":220}})JSON"},
+    {"/story/screens/SCENE_AUDIO_PLAYER.json", R"JSON({"id":"SCENE_AUDIO_PLAYER","title":"AUDIO PLAYER","subtitle":"Songs, radio, playlists","symbol":"MUSIC","effect":"wave","theme":{"bg":"#102B5C","accent":"#6ED8FF","text":"#F2F9FF"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":360},"timeline":{"loop":true,"duration_ms":1800,"keyframes":[{"at_ms":0,"effect":"wave","speed_ms":360,"theme":{"bg":"#102B5C","accent":"#6ED8FF","text":"#F2F9FF"}},{"at_ms":1800,"effect":"pulse","speed_ms":300,"theme":{"bg":"#163978","accent":"#8EEBFF","text":"#FFFFFF"}}]},"transition":{"effect":"fade","duration_ms":180}})JSON"},
+    {"/story/screens/SCENE_AUDIOBOOK.json", R"JSON({"id":"SCENE_AUDIOBOOK","title":"AUDIOBOOK","subtitle":"Continue your story","symbol":"BOOK","effect":"radar","theme":{"bg":"#1D254F","accent":"#F7C66A","text":"#FFF8EB"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":420},"timeline":{"loop":true,"duration_ms":2000,"keyframes":[{"at_ms":0,"effect":"radar","speed_ms":420,"theme":{"bg":"#1D254F","accent":"#F7C66A","text":"#FFF8EB"}},{"at_ms":2000,"effect":"wave","speed_ms":360,"theme":{"bg":"#253067","accent":"#FFD786","text":"#FFFFFF"}}]},"transition":{"effect":"zoom","duration_ms":200}})JSON"},
+    {"/story/screens/SCENE_PHOTO_MANAGER.json", R"JSON({"id":"SCENE_PHOTO_MANAGER","title":"CAMERA","subtitle":"Photos and video clips","symbol":"CAM","effect":"scan","theme":{"bg":"#082A33","accent":"#6FFFE6","text":"#E8FFFB"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":500},"timeline":{"loop":true,"duration_ms":2200,"keyframes":[{"at_ms":0,"effect":"scan","speed_ms":500,"theme":{"bg":"#082A33","accent":"#6FFFE6","text":"#E8FFFB"}},{"at_ms":1100,"effect":"pulse","speed_ms":360,"theme":{"bg":"#0B3541","accent":"#91FFF0","text":"#F5FFFD"}},{"at_ms":2200,"effect":"scan","speed_ms":500,"theme":{"bg":"#082A33","accent":"#6FFFE6","text":"#E8FFFB"}}]},"transition":{"effect":"wipe","duration_ms":190}})JSON"},
+    {"/story/screens/SCENE_QR_DETECTOR.json", R"JSON({"id":"SCENE_QR_DETECTOR","title":"QR SCANNER","subtitle":"Scan and open","symbol":"QR","effect":"radar","theme":{"bg":"#132A54","accent":"#7AB2FF","text":"#F0F6FF"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":520},"timeline":{"loop":true,"duration_ms":2200,"keyframes":[{"at_ms":0,"effect":"radar","speed_ms":520,"theme":{"bg":"#132A54","accent":"#7AB2FF","text":"#F0F6FF"}},{"at_ms":2200,"effect":"pulse","speed_ms":340,"theme":{"bg":"#1A3970","accent":"#9BC7FF","text":"#FFFFFF"}}]},"transition":{"effect":"fade","duration_ms":180}})JSON"},
+    {"/story/screens/SCENE_RECORDER.json", R"JSON({"id":"SCENE_RECORDER","title":"DICTAPHONE","subtitle":"Record, play, delete","symbol":"MIC","effect":"wave","theme":{"bg":"#3B1028","accent":"#FF73C3","text":"#FFEFFE"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":360},"timeline":{"loop":true,"duration_ms":1800,"keyframes":[{"at_ms":0,"effect":"wave","speed_ms":360,"theme":{"bg":"#3B1028","accent":"#FF73C3","text":"#FFEFFE"}},{"at_ms":1800,"effect":"pulse","speed_ms":300,"theme":{"bg":"#4F1737","accent":"#FF98D4","text":"#FFF7FF"}}]},"transition":{"effect":"slide_up","duration_ms":200}})JSON"},
+    {"/story/screens/SCENE_TIMER.json", R"JSON({"id":"SCENE_TIMER","title":"TIMER TOOLS","subtitle":"Stopwatch and countdown","symbol":"TIME","effect":"pulse","theme":{"bg":"#1A2138","accent":"#76FFAA","text":"#EEFFF5"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":420},"timeline":{"loop":true,"duration_ms":2000,"keyframes":[{"at_ms":0,"effect":"pulse","speed_ms":420,"theme":{"bg":"#1A2138","accent":"#76FFAA","text":"#EEFFF5"}},{"at_ms":1000,"effect":"radar","speed_ms":560,"theme":{"bg":"#202A45","accent":"#9BFFC2","text":"#F8FFFB"}},{"at_ms":2000,"effect":"pulse","speed_ms":420,"theme":{"bg":"#1A2138","accent":"#76FFAA","text":"#EEFFF5"}}]},"transition":{"effect":"slide_right","duration_ms":190}})JSON"},
+    {"/story/screens/SCENE_FLASHLIGHT.json", R"JSON({"id":"SCENE_FLASHLIGHT","title":"FLASHLIGHT","subtitle":"Light level control","symbol":"LAMP","effect":"blink","theme":{"bg":"#27210E","accent":"#FFD76B","text":"#FFF8E8"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":260},"timeline":{"loop":true,"duration_ms":1400,"keyframes":[{"at_ms":0,"effect":"blink","speed_ms":260,"theme":{"bg":"#27210E","accent":"#FFD76B","text":"#FFF8E8"}},{"at_ms":700,"effect":"pulse","speed_ms":340,"theme":{"bg":"#3A3015","accent":"#FFE18E","text":"#FFFDF5"}},{"at_ms":1400,"effect":"blink","speed_ms":260,"theme":{"bg":"#27210E","accent":"#FFD76B","text":"#FFF8E8"}}]},"transition":{"effect":"camera_flash","duration_ms":150}})JSON"},
+    {"/story/screens/SCENE_CALCULATOR.json", R"JSON({"id":"SCENE_CALCULATOR","title":"CALCULATOR","subtitle":"Quick math for kids","symbol":"MATH","effect":"wave","theme":{"bg":"#11233C","accent":"#8BC8FF","text":"#EDF6FF"},"text":{"show_title":true,"show_subtitle":true,"show_symbol":true,"title_case":"raw","subtitle_case":"raw","title_font_face":"pressstart2p_16","subtitle_font_face":"ibm_bold_16","symbol_font_face":"orbitron_28"},"visual":{"show_title":true,"show_subtitle":true,"show_symbol":true,"effect_speed_ms":380},"timeline":{"loop":true,"duration_ms":1800,"keyframes":[{"at_ms":0,"effect":"wave","speed_ms":380,"theme":{"bg":"#11233C","accent":"#8BC8FF","text":"#EDF6FF"}},{"at_ms":1800,"effect":"radar","speed_ms":540,"theme":{"bg":"#173050","accent":"#A6D6FF","text":"#F8FBFF"}}]},"transition":{"effect":"fade","duration_ms":170}})JSON"},
     {"/story/scenarios/DEFAULT.json", R"JSON({"scenario":"DEFAULT","source":"embedded_minimal"})JSON"},
+};
+
+constexpr EmbeddedAppSeed kEmbeddedAppSeeds[] = {
+    {"audio_player", "Lecteur Audio", "media", "SCENE_AUDIO_PLAYER", true, 193U, 16U, true, true},
+    {"camera_video", "Appareil Photo/Video", "capture", "SCENE_PHOTO_MANAGER", true, 196U, 32U, true, false},
+    {"dictaphone", "Dictaphone", "capture", "SCENE_RECORDER", true, 194U, 32U, true, false},
+    {"timer_tools", "Chronometre/Minuteur", "utility", "SCENE_TIMER", true, 128U, 0U, true, false},
+    {"flashlight", "Lampe de Poche", "utility", "SCENE_FLASHLIGHT", true, 136U, 0U, true, false},
+    {"calculator", "Calculatrice", "utility", "SCENE_CALCULATOR", true, 128U, 0U, true, false},
+    {"qr_scanner", "Lecteur QR Code", "capture", "SCENE_QR_DETECTOR", true, 132U, 0U, true, false},
+    {"audiobook_player", "Livres Audio", "media", "SCENE_AUDIOBOOK", true, 193U, 48U, true, true},
+    {"kids_webradio", "Webradio Enfants", "kids_media", "SCENE_WEBRADIO", false, 129U, 80U, true, true},
+    {"kids_podcast", "Podcast Enfants", "kids_media", "SCENE_PODCAST", false, 129U, 80U, true, true},
+    {"kids_drawing", "Dessin", "kids_learning", "SCENE_DRAWING", false, 128U, 0U, true, false},
+    {"kids_coloring", "Coloriage", "kids_learning", "SCENE_COLORING", false, 128U, 0U, true, false},
+    {"kids_music", "Musique Enfants", "kids_media", "SCENE_KIDS_MUSIC", false, 129U, 80U, true, true},
+    {"kids_yoga", "Yoga Enfants", "kids_wellness", "SCENE_KIDS_YOGA", false, 129U, 80U, true, true},
+    {"kids_meditation", "Meditation Enfants", "kids_wellness", "SCENE_KIDS_MEDITATION", false, 129U, 80U, true, true},
+    {"kids_languages", "Langues Enfants", "kids_learning", "SCENE_KIDS_LANG", false, 129U, 80U, true, true},
+    {"kids_math", "Maths Enfants", "kids_learning", "SCENE_KIDS_MATH", false, 128U, 209U, true, true},
+    {"kids_science", "Sciences Enfants", "kids_learning", "SCENE_KIDS_SCIENCE", false, 128U, 209U, true, true},
+    {"kids_geography", "Geographie Enfants", "kids_learning", "SCENE_KIDS_GEO", false, 128U, 209U, true, true},
+    {"nes_emulator", "Emulateur NES", "games", "SCENE_NES_EMU", false, 193U, 32U, true, false},
+};
+
+constexpr EmbeddedScreenSeed kEmbeddedV1Screens[] = {
+    {"SCENE_WEBRADIO", "WEBRADIO", "Kids radio streaming", "RADIO", "wave", "#12315E", "#73D3FF", "#F0F8FF"},
+    {"SCENE_PODCAST", "PODCAST", "Stories and episodes", "CAST", "radar", "#1F2A56", "#FFC56A", "#FFF8EA"},
+    {"SCENE_DRAWING", "DRAWING", "Draw with bright colors", "DRAW", "pulse", "#2E1E5A", "#FF8CD5", "#FFF4FF"},
+    {"SCENE_COLORING", "COLORING", "Color pages for kids", "PAINT", "wave", "#1B3D59", "#8BFFE3", "#EEFFF9"},
+    {"SCENE_KIDS_MUSIC", "KIDS MUSIC", "Play and sing", "NOTE", "pulse", "#2B2F61", "#9CC7FF", "#F4F8FF"},
+    {"SCENE_KIDS_YOGA", "KIDS YOGA", "Stretch and breathe", "YOGA", "radar", "#234A41", "#8BFFD4", "#EEFFF8"},
+    {"SCENE_KIDS_MEDITATION", "MEDITATION", "Calm moments", "ZEN", "wave", "#2A2A4E", "#B7A4FF", "#F8F6FF"},
+    {"SCENE_KIDS_LANG", "LANGUAGES", "Words and sounds", "ABC", "scan", "#3A2A4A", "#FFD27A", "#FFF9EE"},
+    {"SCENE_KIDS_MATH", "KIDS MATH", "Numbers and games", "123", "pulse", "#1F3559", "#7FD7FF", "#EDF7FF"},
+    {"SCENE_KIDS_SCIENCE", "SCIENCE", "Discover and learn", "SCI", "radar", "#223E45", "#8CFFE9", "#F0FFFC"},
+    {"SCENE_KIDS_GEO", "GEOGRAPHY", "Maps and places", "MAP", "scan", "#2B3554", "#A7C4FF", "#F4F8FF"},
+    {"SCENE_NES_EMU", "NES EMULATOR", "ROM validation mode", "NES", "blink", "#2E2020", "#FFB273", "#FFF3EA"},
 };
 
 constexpr uint8_t kSdFailureDisableThreshold = 3U;
@@ -880,6 +951,129 @@ bool StorageManager::ensureDefaultStoryBundle() {
       ++written_count;
     }
   }
+
+  auto write_if_missing = [this, &written_count](const String& path, const String& payload) {
+    if (path.isEmpty() || payload.isEmpty() || pathExistsOnLittleFs(path.c_str())) {
+      return;
+    }
+    if (writeTextToLittleFs(path.c_str(), payload.c_str())) {
+      ++written_count;
+    }
+  };
+
+  for (const EmbeddedScreenSeed& screen : kEmbeddedV1Screens) {
+    DynamicJsonDocument doc(1536);
+    doc["id"] = screen.id;
+    doc["title"] = screen.title;
+    doc["subtitle"] = screen.subtitle;
+    doc["symbol"] = screen.symbol;
+    doc["effect"] = screen.effect;
+    JsonObject theme = doc["theme"].to<JsonObject>();
+    theme["bg"] = screen.bg;
+    theme["accent"] = screen.accent;
+    theme["text"] = screen.text;
+    JsonObject text = doc["text"].to<JsonObject>();
+    text["show_title"] = true;
+    text["show_subtitle"] = true;
+    text["show_symbol"] = true;
+    text["title_case"] = "raw";
+    text["subtitle_case"] = "raw";
+    text["title_font_face"] = "pressstart2p_16";
+    text["subtitle_font_face"] = "ibm_bold_16";
+    text["symbol_font_face"] = "orbitron_28";
+    JsonObject visual = doc["visual"].to<JsonObject>();
+    visual["show_title"] = true;
+    visual["show_subtitle"] = true;
+    visual["show_symbol"] = true;
+    visual["effect_speed_ms"] = 360;
+    JsonObject transition = doc["transition"].to<JsonObject>();
+    transition["effect"] = "fade";
+    transition["duration_ms"] = 180;
+    String payload;
+    serializeJson(doc, payload);
+    const String screen_path = String("/story/screens/") + screen.id + ".json";
+    write_if_missing(screen_path, payload);
+  }
+
+  ensurePath("/apps");
+  ensurePath("/apps/shared");
+  ensurePath("/apps/shared/incoming");
+  ensurePath("/apps/nes_emulator");
+  ensurePath("/apps/nes_emulator/roms");
+
+  if (!pathExistsOnLittleFs("/apps/registry.json")) {
+    DynamicJsonDocument registry_doc(24576);
+    JsonArray apps = registry_doc["apps"].to<JsonArray>();
+    for (const EmbeddedAppSeed& seed : kEmbeddedAppSeeds) {
+      JsonObject app = apps.createNestedObject();
+      app["id"] = seed.id;
+      app["title"] = seed.title;
+      app["category"] = seed.category;
+      app["entry_screen"] = seed.entry_screen;
+      app["enabled"] = seed.enabled;
+      app["version"] = "1.0.0";
+      app["icon_path"] = String("/apps/") + seed.id + "/icon.png";
+      app["required_capabilities"] = seed.required_capabilities;
+      app["optional_capabilities"] = seed.optional_capabilities;
+      app["supports_offline"] = seed.supports_offline;
+      app["supports_streaming"] = seed.supports_streaming;
+      app["asset_manifest"] = String("/apps/") + seed.id + "/manifest.json";
+    }
+    String payload;
+    serializeJson(registry_doc, payload);
+    write_if_missing("/apps/registry.json", payload);
+  }
+
+  for (const EmbeddedAppSeed& seed : kEmbeddedAppSeeds) {
+    const String app_root = String("/apps/") + seed.id;
+    ensurePath(app_root.c_str());
+    ensurePath((app_root + "/content").c_str());
+    ensurePath((app_root + "/audio").c_str());
+    ensurePath((app_root + "/cache").c_str());
+
+    const String manifest_path = app_root + "/manifest.json";
+    if (!pathExistsOnLittleFs(manifest_path.c_str())) {
+      DynamicJsonDocument manifest_doc(1024);
+      manifest_doc["id"] = seed.id;
+      manifest_doc["title"] = seed.title;
+      manifest_doc["category"] = seed.category;
+      manifest_doc["entry_screen"] = seed.entry_screen;
+      manifest_doc["enabled"] = seed.enabled;
+      manifest_doc["version"] = "1.0.0";
+      manifest_doc["icon_path"] = app_root + "/icon.png";
+      manifest_doc["required_capabilities"] = seed.required_capabilities;
+      manifest_doc["optional_capabilities"] = seed.optional_capabilities;
+      manifest_doc["supports_offline"] = seed.supports_offline;
+      manifest_doc["supports_streaming"] = seed.supports_streaming;
+      manifest_doc["asset_manifest"] = manifest_path;
+      String payload;
+      serializeJson(manifest_doc, payload);
+      write_if_missing(manifest_path, payload);
+    }
+
+    const String streams_path = app_root + "/streams.json";
+    if (!pathExistsOnLittleFs(streams_path.c_str())) {
+      DynamicJsonDocument streams_doc(768);
+      streams_doc["id"] = seed.id;
+      streams_doc["streams"].to<JsonArray>();
+      String payload;
+      serializeJson(streams_doc, payload);
+      write_if_missing(streams_path, payload);
+    }
+
+    const String progress_path = app_root + "/progress.json";
+    if (!pathExistsOnLittleFs(progress_path.c_str())) {
+      DynamicJsonDocument progress_doc(640);
+      progress_doc["id"] = seed.id;
+      progress_doc["updated_at_ms"] = 0U;
+      progress_doc["cursor"].to<JsonObject>();
+      progress_doc["bookmarks"].to<JsonArray>();
+      String payload;
+      serializeJson(progress_doc, payload);
+      write_if_missing(progress_path, payload);
+    }
+  }
+
   if (written_count > 0U) {
     invalidateStoryCaches();
     Serial.printf("[FS] provisioned embedded story assets: %u\n", written_count);

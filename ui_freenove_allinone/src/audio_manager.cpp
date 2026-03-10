@@ -14,6 +14,7 @@
 #include <LittleFS.h>
 #include <cctype>
 #include <cstring>
+#include <memory>
 
 #if defined(ARDUINO_ARCH_ESP32) && __has_include(<SD_MMC.h>)
 #include <SD_MMC.h>
@@ -232,10 +233,12 @@ bool AudioManager::play(const char* filename) {
   const uint8_t previous_active = active_channel_;
   const uint8_t target_channel = selectTargetChannel();
   const bool is_wav = endsWithIgnoreCase(fixed_path.c_str(), ".wav");
-  AudioFileSource* source = new AudioFileSourceFS(*file_system, fixed_path.c_str());
-  AudioGenerator* decoder = is_wav ? static_cast<AudioGenerator*>(new AudioGeneratorWAV())
-                                   : static_cast<AudioGenerator*>(new AudioGeneratorMP3());
-  if (!playOnChannel(target_channel, source, decoder, fixed_path.c_str())) {
+  
+  // SECURITY FIX: Use std::make_unique to prevent memory leak if 2nd allocation fails
+  auto source = std::make_unique<AudioFileSourceFS>(*file_system, fixed_path.c_str());
+  auto decoder = is_wav ? std::make_unique<AudioGeneratorWAV>()
+                        : std::make_unique<AudioGeneratorMP3>();
+  if (!playOnChannel(target_channel, source.get(), decoder.get(), fixed_path.c_str())) {
     return false;
   }
 
@@ -261,9 +264,10 @@ bool AudioManager::playDiagnosticTone() {
   const uint8_t previous_active = active_channel_;
   const uint8_t target_channel = selectTargetChannel();
 
-  AudioFileSource* source = new AudioFileSourcePROGMEM(kDiagnosticRtttl, std::strlen(kDiagnosticRtttl));
-  AudioGenerator* decoder = new AudioGeneratorRTTTL();
-  if (!playOnChannel(target_channel, source, decoder, "builtin:rtttl")) {
+  // SECURITY FIX: Use std::make_unique to prevent memory leak if 2nd allocation fails
+  auto source = std::make_unique<AudioFileSourcePROGMEM>(kDiagnosticRtttl, std::strlen(kDiagnosticRtttl));
+  auto decoder = std::make_unique<AudioGeneratorRTTTL>();
+  if (!playOnChannel(target_channel, source.get(), decoder.get(), "builtin:rtttl")) {
     Serial.println("[AUDIO] diagnostic tone begin failed");
     return false;
   }

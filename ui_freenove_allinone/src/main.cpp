@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <esp_task_wdt.h>
 
 #include "audio_manager.h"
 #include "button_manager.h"
@@ -15,11 +16,11 @@
 #include "hardware_manager.h"
 #include "media_manager.h"
 #include "network_manager.h"
+#include "auth/auth_service.h"
+#include "core/wifi_config.h"
 #include "runtime/la_trigger_service.h"
 #include "runtime/runtime_config_service.h"
 #include "runtime/runtime_config_types.h"
-#include "scenario_manager.h"
-#include "scenarios/default_scenario_v2.h"
 #include "storage_manager.h"
 #include "touch_manager.h"
 #include "ui_manager.h"
@@ -61,6 +62,11 @@ bool g_la_dispatch_in_progress = false;
 char g_last_action_step_key[72] = {0};
 char g_serial_line[kSerialLineCapacity] = {0};
 size_t g_serial_line_len = 0U;
+
+// Watchdog Timer Configuration
+constexpr uint32_t kDefaultWatchdogTimeoutSec = 30U;  // 30 seconds
+uint32_t g_watchdog_feeds = 0U;  // Counter for monitoring
+uint32_t g_watchdog_last_feed_ms = 0U;
 
 bool dispatchScenarioEventByName(const char* event_name, uint32_t now_ms);
 
@@ -2005,6 +2011,28 @@ void webSendStatusSse() {
   g_web_server.sendContent("event: done\ndata: 1\n\n");
 }
 
+// ============================================================================
+// SECURITY: Validate Bearer token for protected API endpoints
+// Returns true if token is valid, false if missing/invalid
+// On unauthorized access, sends HTTP 401 response 
+// ============================================================================
+inline bool validateApiToken() {
+  const char* auth_header = g_web_server.header("Authorization").c_str();
+  AuthService::AuthStatus status = AuthService::validateBearerToken(auth_header);
+  
+  if (status != AuthService::AuthStatus::kOk) {
+    const char* error_msg = AuthService::statusMessage(status);
+    String json_response = "{\"ok\":false,\"error\":\"";
+    json_response += error_msg;
+    json_response += "\"}";
+    g_web_server.send(401, "application/json", json_response);
+    Serial.printf("[API] rejected request missing/invalid token from %s\n", 
+                  g_web_server.client().remoteIP().toString().c_str());
+    return false;
+  }
+  return true;
+}
+
 void setupWebUi() {
   g_web_server.on("/", HTTP_GET, []() {
     g_web_server.send(200, "text/html", kWebUiIndex);
@@ -2100,11 +2128,13 @@ void setupWebUi() {
   });
 
   g_web_server.on("/api/camera/on", HTTP_POST, []() {
+    if (!validateApiToken()) return;
     const bool ok = g_camera.start();
     webSendResult("CAM_ON", ok);
   });
 
   g_web_server.on("/api/camera/off", HTTP_POST, []() {
+    if (!validateApiToken()) return;
     g_camera.stop();
     webSendResult("CAM_OFF", true);
   });
@@ -2698,11 +2728,47 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
         "MIC_TUNER_STATUS [ON|OFF|<period_ms>] "
         "CAM_STATUS CAM_ON CAM_OFF CAM_SNAPSHOT [filename] "
         "MEDIA_LIST <picture|music|recorder> MEDIA_PLAY <path> MEDIA_STOP REC_START [seconds] [filename] REC_STOP REC_STATUS "
-        "NET_STATUS WIFI_STATUS WIFI_TEST WIFI_STA <ssid> <pass> WIFI_CONNECT <ssid> <pass> WIFI_DISCONNECT "
+        "NET_STATUS WIFI_STATUS WIFI_TEST WIFI_CONFIG <ssid> <password> WIFI_STA <ssid> <pass> WIFI_CONNECT <ssid> <pass> WIFI_DISCONNECT "
         "WIFI_AP_ON [ssid] [pass] WIFI_AP_OFF "
         "ESPNOW_ON ESPNOW_OFF ESPNOW_STATUS ESPNOW_STATUS_JSON ESPNOW_PEER_ADD <mac> ESPNOW_PEER_DEL <mac> ESPNOW_PEER_LIST "
         "ESPNOW_SEND <mac|broadcast> <text|json> "
-        "AUDIO_TEST AUDIO_TEST_FS AUDIO_PROFILE <idx> AUDIO_STATUS VOL <0..21> AUDIO_STOP STOP");
+        "AUDIO_TEST AUDIO_TEST_FS AUDIO_PROFILE <idx> AUDIO_STATUS VOL <0..21> AUDIO_STOP STOP "
+        "WDT [status|TRIGGER|HANG <sec>]");
+    return;
+  }
+  if (std::strcmp(command, "WDT") == 0) {
+    // WDT commands - Watchdog Timer control
+    if (argument == nullptr || argument[0] == '\0') {
+      Serial.printf("ACK WDT feeds=%lu status=active\n", g_watchdog_feeds);
+      return;
+    }
+    if (std::strcmp(argument, "TRIGGER") == 0) {
+      Serial.println("WDT Deliberately triggering watchdog in 3 seconds...");
+      delay(3000);
+      Serial.println("WDT Entering infinite loop - watchdog will reboot");
+      while (true) {
+        // Intentional hang - watchdog will trigger after timeout
+      }
+      return;
+    }
+    if (std::strcmp(argument, "HANG") == 0) {
+      Serial.println("ERR WDT HANG requires <seconds> argument");
+      return;
+    }
+    if (strncmp(argument, "HANG ", 5) == 0) {
+      unsigned long hang_sec = 0;
+      if (sscanf(argument + 5, "%lu", &hang_sec) == 1 && hang_sec > 0 && hang_sec <= 120) {
+        Serial.printf("WDT Hanging for %lu seconds to test watchdog...\n", hang_sec);
+        delay(2000);
+        uint32_t hang_until = millis() + (hang_sec * 1000U);
+        while (millis() < hang_until) {
+          // Busy loop without watchdog feed - watchdog will reboot if hang > timeout
+        }
+        Serial.println("WDT Hang ended");
+        return;
+      }
+    }
+    Serial.println("ERR WDT_ARG: Use WDT [status|TRIGGER|HANG <sec>]");
     return;
   }
   if (std::strcmp(command, "STATUS") == 0) {
@@ -2940,6 +3006,42 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
     Serial.printf("ACK WIFI_TEST ssid=%s ok=%u\n", g_network_cfg.wifi_test_ssid, ok ? 1U : 0U);
     return;
   }
+  if (std::strcmp(command, "WIFI_CONFIG") == 0) {
+    if (argument == nullptr || argument[0] == '\0') {
+      Serial.println("ERR WIFI_CONFIG_FORMAT: Usage: WIFI_CONFIG <SSID> <PASSWORD>");
+      return;
+    }
+    // Reconstruct full command line
+    char full_cmd[256];
+    snprintf(full_cmd, sizeof(full_cmd), "WIFI_CONFIG %s", argument);
+    
+    char ssid[ZacusWiFiConfig::kMaxSSIDLen + 1];
+    char password[ZacusWiFiConfig::kMaxPasswordLen + 1];
+    
+    if (!ZacusWiFiConfig::parseWifiConfigCommand(full_cmd, ssid, password)) {
+      Serial.println("ERR WIFI_CONFIG_INVALID: Invalid SSID or password format");
+      ZacusWiFiConfig::secureZeroMemory(ssid, sizeof(ssid));
+      ZacusWiFiConfig::secureZeroMemory(password, sizeof(password));
+      return;
+    }
+    
+    // Save to NVS
+    if (!ZacusWiFiConfig::writeSSIDToNVS(ssid) || !ZacusWiFiConfig::writePasswordToNVS(password)) {
+      Serial.println("ERR WIFI_CONFIG_SAVE: Failed to save to NVS");
+      ZacusWiFiConfig::secureZeroMemory(ssid, sizeof(ssid));
+      ZacusWiFiConfig::secureZeroMemory(password, sizeof(password));
+      return;
+    }
+    
+    // Clear sensitive data from RAM
+    ZacusWiFiConfig::secureZeroMemory(ssid, sizeof(ssid));
+    ZacusWiFiConfig::secureZeroMemory(password, sizeof(password));
+    
+    Serial.println("ACK WIFI_CONFIG: Credentials saved. Rebooting...");
+    delay(500);
+    ESP.restart();
+    return;
+  }
   if (std::strcmp(command, "WIFI_STA") == 0 || std::strcmp(command, "WIFI_CONNECT") == 0) {
     if (argument == nullptr) {
       Serial.println("ERR WIFI_STA_ARG");
@@ -3154,6 +3256,15 @@ void setup() {
   delay(100);
   Serial.println("[MAIN] Freenove all-in-one boot");
 
+  // ===== WATCHDOG TIMER INITIALIZATION =====
+  esp_task_wdt_init(kDefaultWatchdogTimeoutSec, true);  // timeout in seconds, panic on timeout
+  esp_task_wdt_add(NULL);  // Add current task (Arduino loop) to watchdog
+  g_watchdog_feeds = 0U;
+  g_watchdog_last_feed_ms = millis();
+  Serial.printf("[WATCHDOG] Initialized: timeout=%u seconds, panic_on_timeout=enabled\n",
+                kDefaultWatchdogTimeoutSec);
+  // ===== END WATCHDOG INITIALIZATION =====
+
   if (!g_storage.begin()) {
     Serial.println("[MAIN] storage init failed");
   }
@@ -3230,6 +3341,12 @@ void setup() {
   } else {
     Serial.println("[NET] ESP-NOW boot disabled by APP_ESPNOW config");
   }
+  // Initialize authentication service for secured API endpoints
+  if (!AuthService::init()) {
+    Serial.println("[AUTH] WARNING: Auth service initialization failed!");
+  } else {
+    Serial.println("[AUTH] Bearer token initialized successfully");
+  }
   setupWebUi();
   g_audio.begin();
   Serial.printf("[MAIN] audio profile=%u:%s count=%u\n",
@@ -3255,6 +3372,16 @@ void setup() {
 
 void loop() {
   const uint32_t now_ms = millis();
+  
+  // ===== WATCHDOG FEED =====
+  esp_task_wdt_reset();  // Reset watchdog timer (minimal overhead ~1µs)
+  g_watchdog_feeds++;
+  if ((now_ms - g_watchdog_last_feed_ms) > 10000U) {
+    Serial.printf("[WATCHDOG] active, feeds=%lu\n", g_watchdog_feeds);
+    g_watchdog_last_feed_ms = now_ms;
+  }
+  // ===== END WATCHDOG FEED =====
+  
   pollSerialCommands(now_ms);
 
   ButtonEvent event;

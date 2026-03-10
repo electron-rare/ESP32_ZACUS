@@ -46,10 +46,6 @@ bool isLaDetectorScene(const ScenarioSnapshot& snapshot) {
   return isSceneId(snapshot, "SCENE_LA_DETECTOR");
 }
 
-bool isLefouDetectorScene(const ScenarioSnapshot& snapshot) {
-  return isSceneId(snapshot, "SCENE_LEFOU_DETECTOR");
-}
-
 uint16_t toleranceForTarget(const RuntimeHardwareConfig& config) {
   const uint16_t configured = config.mic_la_tolerance_hz;
   if (configured == 0U) {
@@ -104,7 +100,7 @@ bool LaTriggerService::isTriggerStep(const ScenarioSnapshot& snapshot) {
       std::strcmp(snapshot.step->id, "STEP_WAIT_ETAPE2") == 0) {
     return true;
   }
-  return isLaDetectorScene(snapshot) || isLefouDetectorScene(snapshot);
+  return isLaDetectorScene(snapshot);
 }
 
 bool LaTriggerService::shouldEnforceMatchOnly(const RuntimeHardwareConfig& config,
@@ -246,7 +242,6 @@ LaTriggerService::UpdateResult LaTriggerService::update(const RuntimeHardwareCon
 
   const bool sequence_mode =
       config.mic_la_sequence_enabled &&
-      isLefouDetectorScene(snapshot) &&
       (config.mic_la_sequence_count > 0U);
   if (sequence_mode) {
     const uint8_t max_notes = RuntimeHardwareConfig::kLaSequenceMaxNotes;

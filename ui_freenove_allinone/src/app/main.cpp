@@ -33,6 +33,9 @@
 #include "media_manager.h"
 #include "ui_freenove_config.h"
 #include "network_manager.h"
+#include "app/app_registry.h"
+#include "app/app_runtime_manager.h"
+#include "app/file_share_service.h"
 #include "app/runtime_scene_service.h"
 #include "app/runtime_serial_service.h"
 #include "app/runtime_web_service.h"
@@ -48,7 +51,6 @@
 #include "runtime/runtime_config_service.h"
 #include "runtime/runtime_services.h"
 #include "runtime/runtime_config_types.h"
-#include "scenario_manager.h"
 #include "scenarios/default_scenario_v2.h"
 #include "storage_manager.h"
 #include "system/boot_report.h"
@@ -103,9 +105,9 @@ constexpr const char* kAmpMusicPathFallback1 = "/audio/music";
 constexpr const char* kAmpMusicPathFallback2 = "/audio";
 #endif
 constexpr const char* kCameraSceneId = "SCENE_PHOTO_MANAGER";
-constexpr const char* kMediaManagerSceneId = "SCENE_MEDIA_MANAGER";
+constexpr const char* kMediaManagerSceneId = "ZACUS_U-SON";
 constexpr const char* kTestLabSceneId = "SCENE_TEST_LAB";
-constexpr const char* kDefaultBootSceneId = "SCENE_CREDITS";
+constexpr const char* kDefaultBootSceneId = "ZACUS_U-SON";
 constexpr bool kBootEspNowOnlyMode = true;
 constexpr const char* kTestLabLockStepId = "TEST_LAB_LOCK";
 constexpr bool kLockNvsMediaManagerMode = true;
@@ -211,6 +213,9 @@ size_t g_serial_line_len = 0U;
 RuntimeServices g_runtime_services;
 AppCoordinator g_app_coordinator;
 runtime::resource::ResourceCoordinator g_resource_coordinator;
+AppRegistry g_app_registry;
+AppRuntimeManager g_app_runtime_manager;
+FileShareService g_file_share_service;
 SceneFxOrchestrator g_scene_fx_orchestrator;
 RuntimeSerialService g_runtime_serial_service;
 RuntimeSceneService g_runtime_scene_service;
@@ -2304,10 +2309,16 @@ void webFillEspNowStatus(JsonObject out, const NetworkManager::Snapshot& net);
 void webFillHardwareStatus(JsonObject out);
 void webFillCameraStatus(JsonObject out);
 void webFillMediaStatus(JsonObject out, uint32_t now_ms);
+void webFillAppsStatus(JsonObject out);
 void webSendHardwareStatus();
 void webSendCameraStatus();
 void webSendMediaFiles();
 void webSendMediaRecordStatus();
+void webSendAppsList();
+void webSendAppsStatus();
+void webSendAppsContentHealth();
+void webSendSharePeers();
+void webSendShareFiles();
 void webSendAuthStatus();
 void webSendProvisionStatus();
 bool webReconnectLocalWifi();
@@ -3596,38 +3607,49 @@ constexpr const char* kWebUiIndex = R"HTML(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Zacus Freenove</title>
+  <link rel="icon" type="image/png" href="/webui/assets/favicon.png" />
+  <link rel="preload" href="/webui/assets/fonts/PressStart2P-Regular.ttf" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="/webui/assets/fonts/ComicNeue-Regular.ttf" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="/webui/assets/fonts/ComicNeue-Bold.ttf" as="font" type="font/ttf" crossorigin />
   <style>
-    body { font-family: sans-serif; margin: 1rem; background: #111; color: #eee; }
-    .card { border: 1px solid #444; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-    button { margin: 0.25rem; padding: 0.5rem 0.8rem; }
-    input { margin: 0.25rem; padding: 0.4rem; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #1b1b1b; padding: 0.8rem; border-radius: 6px; }
+    @font-face { font-family: 'ZacusPixel'; src: url('/webui/assets/fonts/PressStart2P-Regular.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'ZacusKids'; src: url('/webui/assets/fonts/ComicNeue-Regular.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'ZacusKids'; src: url('/webui/assets/fonts/ComicNeue-Bold.ttf') format('truetype'); font-display: swap; font-weight: 700; }
+    body { font-family: 'ZacusKids', sans-serif; margin: 1rem; background: radial-gradient(circle at 15% 20%, #173a7a 0%, #0a1734 45%, #060d1f 100%); color: #eef4ff; }
+    h2 { font-family: 'ZacusPixel', monospace; font-size: 1.08rem; letter-spacing: 0.04em; text-align: center; }
+    .card { border: 1px solid #355192; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; background: rgba(10,26,61,0.72); box-shadow: 0 10px 24px rgba(0,0,0,0.28); }
+    .wbtn { margin: 0.25rem; padding: 0.56rem 0.86rem; border-radius: 10px; border: 1px solid #6fe7ff; background: #17356f; color: #f2f8ff; cursor: pointer; font-family: 'ZacusPixel', monospace; font-size: 0.62rem; letter-spacing: 0.03em; }
+    .wbtn:hover { filter: brightness(1.15); }
+    input { margin: 0.25rem; padding: 0.46rem; border-radius: 8px; border: 1px solid #4e6fb4; background: #0f2149; color: #f4f9ff; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #112549; padding: 0.8rem; border-radius: 8px; border: 1px solid #355192; }
+    .hero { width: 100%; max-width: 640px; border-radius: 14px; border: 1px solid #4a6ebe; display: block; margin: 0.5rem auto 1rem auto; }
   </style>
 </head>
 <body>
   <h2>Zacus Freenove WebUI</h2>
+  <img class="hero" src="/webui/assets/header.png" alt="Zacus Kids WebUI" />
   <div class="card">
-    <button onclick="unlock()">UNLOCK</button>
-    <button onclick="nextStep()">NEXT</button>
-    <button onclick="storyRefreshSd()">STORY_REFRESH_SD</button>
-    <button onclick="wifiDisc()">WIFI_DISCONNECT</button>
-    <button onclick="wifiReconn()">WIFI_RECONNECT</button>
-    <button onclick="refreshStatus()">Refresh</button>
+    <button class="wbtn" onclick="unlock()">UNLOCK</button>
+    <button class="wbtn" onclick="nextStep()">NEXT</button>
+    <button class="wbtn" onclick="storyRefreshSd()">STORY_REFRESH_SD</button>
+    <button class="wbtn" onclick="wifiDisc()">WIFI_DISCONNECT</button>
+    <button class="wbtn" onclick="wifiReconn()">WIFI_RECONNECT</button>
+    <button class="wbtn" onclick="refreshStatus()">Refresh</button>
   </div>
   <div class="card">
     <input id="ssid" placeholder="SSID" />
     <input id="pass" placeholder="Password" />
-    <button onclick="wifiConn()">WIFI_CONNECT</button>
+    <button class="wbtn" onclick="wifiConn()">WIFI_CONNECT</button>
   </div>
   <div class="card">
     <input id="token" placeholder="Bearer token" />
-    <button onclick="saveToken()">SET TOKEN</button>
+    <button class="wbtn" onclick="saveToken()">SET TOKEN</button>
   </div>
   <div class="card">
     <input id="payload" placeholder="Payload" />
-    <button onclick="espnowSend()">ESPNOW_SEND</button>
-    <button onclick="espnowOn()">ESPNOW_ON</button>
-    <button onclick="espnowOff()">ESPNOW_OFF</button>
+    <button class="wbtn" onclick="espnowSend()">ESPNOW_SEND</button>
+    <button class="wbtn" onclick="espnowOn()">ESPNOW_ON</button>
+    <button class="wbtn" onclick="espnowOff()">ESPNOW_OFF</button>
   </div>
   <div class="card">
     <pre id="status">loading...</pre>
@@ -3640,6 +3662,19 @@ constexpr const char* kWebUiIndex = R"HTML(
     }
     const tokenStorageKey = "zacus_web_token";
     let apiToken = localStorage.getItem(tokenStorageKey) || "";
+    const sfx = {
+      click: new Audio("/webui/assets/sfx_click.wav"),
+      ok: new Audio("/webui/assets/sfx_ok.wav"),
+      error: new Audio("/webui/assets/sfx_error.wav")
+    };
+    function playSfx(name) {
+      const channel = sfx[name];
+      if (!channel) return;
+      try {
+        channel.currentTime = 0;
+        channel.play();
+      } catch (err) {}
+    }
     function authHeaders() {
       if (!apiToken) {
         return {};
@@ -3653,8 +3688,14 @@ constexpr const char* kWebUiIndex = R"HTML(
       connectStream();
     }
     async function post(path, params) {
+      playSfx("click");
       const body = new URLSearchParams(params || {});
-      await fetch(path, { method: "POST", body, headers: authHeaders() });
+      const res = await fetch(path, { method: "POST", body, headers: authHeaders() });
+      if (res.ok) {
+        playSfx("ok");
+      } else {
+        playSfx("error");
+      }
       await refreshStatus();
     }
     async function refreshStatus() {
@@ -3737,6 +3778,19 @@ void webSendResult(const char* action, bool ok) {
   webSendJsonDocument(document, ok ? 200 : 400);
 }
 
+bool webSendLittleFsAsset(const char* path, const char* content_type) {
+  if (path == nullptr || path[0] == '\0') {
+    return false;
+  }
+  File file = LittleFS.open(path, "r");
+  if (!file || file.isDirectory()) {
+    return false;
+  }
+  g_web_server.streamFile(file, content_type != nullptr ? content_type : "application/octet-stream");
+  file.close();
+  return true;
+}
+
 template <size_t N>
 bool webParseJsonBody(StaticJsonDocument<N>* out_document) {
   if (out_document == nullptr || !g_web_server.hasArg("plain")) {
@@ -3748,6 +3802,22 @@ bool webParseJsonBody(StaticJsonDocument<N>* out_document) {
   }
   const DeserializationError error = deserializeJson(*out_document, body);
   return !error;
+}
+
+const char* appRuntimeStateLabel(AppRuntimeState state) {
+  switch (state) {
+    case AppRuntimeState::kStarting:
+      return "starting";
+    case AppRuntimeState::kRunning:
+      return "running";
+    case AppRuntimeState::kStopping:
+      return "stopping";
+    case AppRuntimeState::kFailed:
+      return "failed";
+    case AppRuntimeState::kIdle:
+    default:
+      return "idle";
+  }
 }
 
 void clearRuntimeStaCredentials() {
@@ -4093,6 +4163,42 @@ void webFillMediaStatus(JsonObject out, uint32_t now_ms) {
   out["last_error"] = media.last_error;
 }
 
+void webFillAppsStatus(JsonObject out) {
+  const AppRuntimeStatus app_status = g_app_runtime_manager.current();
+  out["running_id"] = app_status.id;
+  out["state"] = appRuntimeStateLabel(app_status.state);
+  out["mode"] = app_status.mode;
+  out["source"] = app_status.source;
+  out["last_error"] = app_status.last_error;
+  out["last_event"] = app_status.last_event;
+  out["started_at_ms"] = app_status.started_at_ms;
+  out["last_tick_ms"] = app_status.last_tick_ms;
+  out["tick_count"] = app_status.tick_count;
+  out["required_cap_mask"] = app_status.required_cap_mask;
+  out["missing_cap_mask"] = app_status.missing_cap_mask;
+  out["avg_tick_us"] = app_status.avg_tick_us;
+  out["max_tick_us"] = app_status.max_tick_us;
+  out["heap_free"] = app_status.heap_free;
+  out["psram_free"] = app_status.psram_free;
+  JsonArray catalog = out["catalog"].to<JsonArray>();
+  const std::vector<AppDescriptor>& descriptors = g_app_registry.descriptors();
+  for (const AppDescriptor& descriptor : descriptors) {
+    JsonObject item = catalog.createNestedObject();
+    item["id"] = descriptor.id;
+    item["title"] = descriptor.title;
+    item["category"] = descriptor.category;
+    item["entry_screen"] = descriptor.entry_screen;
+    item["enabled"] = descriptor.enabled;
+    item["version"] = descriptor.version;
+    item["icon_path"] = descriptor.icon_path;
+    item["supports_offline"] = descriptor.supports_offline;
+    item["supports_streaming"] = descriptor.supports_streaming;
+    item["required_capabilities"] = descriptor.required_capabilities;
+    item["optional_capabilities"] = descriptor.optional_capabilities;
+    item["asset_manifest"] = descriptor.asset_manifest;
+  }
+}
+
 void webSendWifiStatus() {
   const NetworkManager::Snapshot net = g_network.snapshot();
   StaticJsonDocument<384> document;
@@ -4146,6 +4252,119 @@ void webSendMediaRecordStatus() {
   StaticJsonDocument<768> document;
   webFillMediaStatus(document.to<JsonObject>(), millis());
   webSendJsonDocument(document);
+}
+
+void webSendAppsList() {
+  DynamicJsonDocument document(12288);
+  JsonObject root = document.to<JsonObject>();
+  root["ok"] = true;
+  JsonArray apps = root["apps"].to<JsonArray>();
+  const std::vector<AppDescriptor>& descriptors = g_app_registry.descriptors();
+  for (const AppDescriptor& descriptor : descriptors) {
+    JsonObject app = apps.createNestedObject();
+    app["id"] = descriptor.id;
+    app["title"] = descriptor.title;
+    app["category"] = descriptor.category;
+    app["entry_screen"] = descriptor.entry_screen;
+    app["enabled"] = descriptor.enabled;
+    app["version"] = descriptor.version;
+    app["icon_path"] = descriptor.icon_path;
+    app["required_capabilities"] = descriptor.required_capabilities;
+    app["optional_capabilities"] = descriptor.optional_capabilities;
+    app["supports_offline"] = descriptor.supports_offline;
+    app["supports_streaming"] = descriptor.supports_streaming;
+    app["asset_manifest"] = descriptor.asset_manifest;
+  }
+  webSendJsonDocument(document);
+}
+
+void webSendAppsStatus() {
+  DynamicJsonDocument document(12288);
+  JsonObject root = document.to<JsonObject>();
+  root["ok"] = true;
+  webFillAppsStatus(root["runtime"].to<JsonObject>());
+  webSendJsonDocument(document);
+}
+
+void webSendAppsContentHealth() {
+  DynamicJsonDocument document(12288);
+  JsonObject root = document.to<JsonObject>();
+  root["ok"] = true;
+  const NetworkManager::Snapshot net = g_network.snapshot();
+  JsonArray apps = root["apps"].to<JsonArray>();
+  const std::vector<AppDescriptor>& descriptors = g_app_registry.descriptors();
+  for (const AppDescriptor& descriptor : descriptors) {
+    JsonObject app = apps.createNestedObject();
+    app["id"] = descriptor.id;
+    app["enabled"] = descriptor.enabled;
+    app["supports_offline"] = descriptor.supports_offline;
+    app["supports_streaming"] = descriptor.supports_streaming;
+    app["manifest"] = descriptor.asset_manifest;
+    const bool manifest_ok = (descriptor.asset_manifest[0] != '\0') &&
+                             g_storage.fileExists(descriptor.asset_manifest);
+    app["manifest_ok"] = manifest_ok;
+    char streams_path[120] = {0};
+    std::snprintf(streams_path, sizeof(streams_path), "/apps/%s/streams.json", descriptor.id);
+    app["streams"] = streams_path;
+    app["streams_ok"] = g_storage.fileExists(streams_path);
+    char progress_path[120] = {0};
+    std::snprintf(progress_path, sizeof(progress_path), "/apps/%s/progress.json", descriptor.id);
+    app["progress"] = progress_path;
+    app["progress_ok"] = g_storage.fileExists(progress_path);
+    app["network_ready"] = net.sta_connected;
+    if (!descriptor.enabled) {
+      app["status"] = "disabled";
+      continue;
+    }
+    if (!manifest_ok) {
+      app["status"] = "degraded";
+      app["error"] = "missing_asset";
+      continue;
+    }
+    if (descriptor.supports_streaming && !descriptor.supports_offline && !net.sta_connected) {
+      app["status"] = "degraded";
+      app["error"] = "network_unavailable";
+      continue;
+    }
+    app["status"] = "ok";
+  }
+  webSendJsonDocument(document);
+}
+
+void webSendSharePeers() {
+  DynamicJsonDocument document(2048);
+  JsonObject root = document.to<JsonObject>();
+  root["ok"] = true;
+  JsonArray peers = root["peers"].to<JsonArray>();
+  FileShareService::PeerInfo discovered[FileShareService::kMaxPeers] = {};
+  const uint8_t count = g_file_share_service.discoverPeers(discovered, FileShareService::kMaxPeers);
+  for (uint8_t idx = 0U; idx < count; ++idx) {
+    JsonObject peer = peers.createNestedObject();
+    peer["instance"] = discovered[idx].instance;
+    peer["host"] = discovered[idx].host;
+    peer["ip"] = discovered[idx].ip;
+    peer["port"] = discovered[idx].port;
+  }
+  root["count"] = count;
+  webSendJsonDocument(document);
+}
+
+void webSendShareFiles() {
+  String files_json;
+  const bool ok = g_file_share_service.listSharedFiles(&files_json);
+  DynamicJsonDocument response(4096);
+  response["ok"] = ok;
+  if (ok) {
+    DynamicJsonDocument files_doc(3072);
+    if (!deserializeJson(files_doc, files_json)) {
+      response["files"] = files_doc.as<JsonArrayConst>();
+    } else {
+      response["files_raw"] = files_json;
+    }
+  } else {
+    response["error"] = "share_list_failed";
+  }
+  webSendJsonDocument(response, ok ? 200 : 500);
 }
 
 void webSendAuthStatus() {
@@ -4371,6 +4590,55 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
                   snapshot.screen_scene_id != nullptr ? snapshot.screen_scene_id : "n/a",
                   snapshot.audio_pack_id != nullptr ? snapshot.audio_pack_id : "n/a");
     return true;
+  }
+
+  if (std::strcmp(action_type, "open_app") == 0) {
+    const char* app_id = g_story_action_doc["config"]["id"] | g_story_action_doc["config"]["app_id"] | "";
+    const char* mode = g_story_action_doc["config"]["mode"] | "story";
+    if (app_id[0] == '\0') {
+      return false;
+    }
+    AppStartRequest request = {};
+    copyText(request.id, sizeof(request.id), app_id);
+    copyText(request.mode, sizeof(request.mode), mode);
+    copyText(request.source, sizeof(request.source), "story_action");
+    const bool ok = g_app_runtime_manager.startApp(request, now_ms);
+    Serial.printf("[ACTION] OPEN_APP id=%s mode=%s ok=%u\n", request.id, request.mode, ok ? 1U : 0U);
+    return ok;
+  }
+
+  if (std::strcmp(action_type, "close_app") == 0) {
+    const char* app_id = g_story_action_doc["config"]["id"] | g_story_action_doc["config"]["app_id"] | "";
+    const char* reason = g_story_action_doc["config"]["reason"] | "story_action";
+    AppStopRequest request = {};
+    copyText(request.id, sizeof(request.id), app_id);
+    copyText(request.reason, sizeof(request.reason), reason);
+    const bool ok = g_app_runtime_manager.stopApp(request, now_ms);
+    Serial.printf("[ACTION] CLOSE_APP id=%s reason=%s ok=%u\n", request.id, request.reason, ok ? 1U : 0U);
+    return ok;
+  }
+
+  if (std::strcmp(action_type, "app_action") == 0) {
+    AppAction app_action = {};
+    const char* app_id = g_story_action_doc["config"]["id"] | g_story_action_doc["config"]["app_id"] | "";
+    const char* action_name = g_story_action_doc["config"]["action"] | g_story_action_doc["config"]["name"] | "";
+    const char* content_type = g_story_action_doc["config"]["content_type"] | "application/json";
+    copyText(app_action.id, sizeof(app_action.id), app_id);
+    copyText(app_action.name, sizeof(app_action.name), action_name);
+    String payload;
+    if (g_story_action_doc["config"]["payload"].is<JsonVariantConst>()) {
+      serializeJson(g_story_action_doc["config"]["payload"], payload);
+    } else {
+      payload = g_story_action_doc["config"]["payload"] | "";
+    }
+    copyText(app_action.payload, sizeof(app_action.payload), payload.c_str());
+    copyText(app_action.content_type, sizeof(app_action.content_type), content_type);
+    const bool ok = g_app_runtime_manager.handleAction(app_action, now_ms);
+    Serial.printf("[ACTION] APP_ACTION id=%s action=%s ok=%u\n",
+                  app_action.id,
+                  app_action.name,
+                  ok ? 1U : 0U);
+    return ok;
   }
 
   if (std::strcmp(action_id, "ACTION_REFRESH_SD") == 0 || std::strcmp(action_type, "refresh_storage") == 0) {
@@ -5170,6 +5438,90 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     return ok;
   }
 
+  if (startsWithIgnoreCase(action.c_str(), "APP_OPEN ")) {
+    String args = action.substring(static_cast<unsigned int>(std::strlen("APP_OPEN ")));
+    args.trim();
+    if (args.isEmpty()) {
+      if (out_error != nullptr) {
+        *out_error = "app_open_arg";
+      }
+      return false;
+    }
+    const int sep = args.indexOf(' ');
+    String app_id = (sep < 0) ? args : args.substring(0, static_cast<unsigned int>(sep));
+    String mode = (sep < 0) ? String("default") : args.substring(static_cast<unsigned int>(sep + 1));
+    app_id.trim();
+    mode.trim();
+    AppStartRequest request = {};
+    copyText(request.id, sizeof(request.id), app_id.c_str());
+    copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
+    copyText(request.source, sizeof(request.source), "control");
+    const bool ok = g_app_runtime_manager.startApp(request, now_ms);
+    if (!ok && out_error != nullptr) {
+      *out_error = g_app_runtime_manager.current().last_error;
+    }
+    return ok;
+  }
+
+  if (startsWithIgnoreCase(action.c_str(), "APP_CLOSE")) {
+    String reason = "control";
+    if (action.length() > std::strlen("APP_CLOSE")) {
+      reason = action.substring(static_cast<unsigned int>(std::strlen("APP_CLOSE")));
+      reason.trim();
+      if (reason.isEmpty()) {
+        reason = "control";
+      }
+    }
+    AppStopRequest request = {};
+    copyText(request.reason, sizeof(request.reason), reason.c_str());
+    const bool ok = g_app_runtime_manager.stopApp(request, now_ms);
+    if (!ok && out_error != nullptr) {
+      *out_error = "app_close_failed";
+    }
+    return ok;
+  }
+
+  if (startsWithIgnoreCase(action.c_str(), "APP_ACTION ")) {
+    String args = action.substring(static_cast<unsigned int>(std::strlen("APP_ACTION ")));
+    args.trim();
+    if (args.isEmpty()) {
+      if (out_error != nullptr) {
+        *out_error = "app_action_arg";
+      }
+      return false;
+    }
+    const int first_sep = args.indexOf(' ');
+    String action_name = (first_sep < 0) ? args : args.substring(0, static_cast<unsigned int>(first_sep));
+    String payload = (first_sep < 0) ? String("") : args.substring(static_cast<unsigned int>(first_sep + 1));
+    action_name.trim();
+    payload.trim();
+    AppAction app_action = {};
+    copyText(app_action.name, sizeof(app_action.name), action_name.c_str());
+    copyText(app_action.payload, sizeof(app_action.payload), payload.c_str());
+    copyText(app_action.content_type,
+             sizeof(app_action.content_type),
+             (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain");
+    const bool ok = g_app_runtime_manager.handleAction(app_action, now_ms);
+    if (!ok && out_error != nullptr) {
+      *out_error = g_app_runtime_manager.current().last_error;
+    }
+    return ok;
+  }
+
+  if (action.equalsIgnoreCase("APP_STATUS")) {
+    const AppRuntimeStatus status = g_app_runtime_manager.current();
+    Serial.printf("APP_STATUS id=%s state=%s mode=%s source=%s err=%s event=%s tick=%lu missing=0x%08lX\n",
+                  status.id,
+                  appRuntimeStateLabel(status.state),
+                  status.mode,
+                  status.source,
+                  status.last_error,
+                  status.last_event,
+                  static_cast<unsigned long>(status.tick_count),
+                  static_cast<unsigned long>(status.missing_cap_mask));
+    return true;
+  }
+
   if (out_error != nullptr) {
     *out_error = "unsupported_action";
   }
@@ -5234,6 +5586,14 @@ void webBuildStatusDocument(StaticJsonDocument<4096>* out_document) {
   JsonObject media = (*out_document)["media"].to<JsonObject>();
   webFillMediaStatus(media, millis());
 
+  const AppRuntimeStatus app_status = g_app_runtime_manager.current();
+  JsonObject apps = (*out_document)["apps"].to<JsonObject>();
+  apps["running_id"] = app_status.id;
+  apps["state"] = appRuntimeStateLabel(app_status.state);
+  apps["last_error"] = app_status.last_error;
+  apps["last_event"] = app_status.last_event;
+  apps["missing_cap_mask"] = app_status.missing_cap_mask;
+
   const runtime::resource::ResourceCoordinatorSnapshot resource_snapshot = g_resource_coordinator.snapshot();
   const UiMemorySnapshot ui_snapshot = g_ui.memorySnapshot();
   JsonObject resource = (*out_document)["resource"].to<JsonObject>();
@@ -5293,6 +5653,47 @@ void setupWebUiImpl() {
 
   g_web_server.on("/", HTTP_GET, []() {
     g_web_server.send(200, "text/html", kWebUiIndex);
+  });
+
+  g_web_server.on("/webui/assets/header.png", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/header.png", "image/png")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/favicon.png", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/favicon.png", "image/png")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/fonts/PressStart2P-Regular.ttf", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/fonts/PressStart2P-Regular.ttf", "font/ttf")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/fonts/ComicNeue-Regular.ttf", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/fonts/ComicNeue-Regular.ttf", "font/ttf")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/fonts/ComicNeue-Bold.ttf", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/fonts/ComicNeue-Bold.ttf", "font/ttf")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/sfx_click.wav", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/sfx_click.wav", "audio/wav")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/sfx_ok.wav", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/sfx_ok.wav", "audio/wav")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
+  });
+  g_web_server.on("/webui/assets/sfx_error.wav", HTTP_GET, []() {
+    if (!webSendLittleFsAsset("/webui/assets/sfx_error.wav", "audio/wav")) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"asset_missing\"}");
+    }
   });
 
   webOnApi(kProvisionStatusPath, HTTP_GET, []() {
@@ -5482,6 +5883,264 @@ void setupWebUiImpl() {
 
   webOnApi("/api/media/record/status", HTTP_GET, []() {
     webSendMediaRecordStatus();
+  });
+
+  webOnApi("/api/apps", HTTP_GET, []() {
+    webSendAppsList();
+  });
+
+  webOnApi("/api/apps/status", HTTP_GET, []() {
+    webSendAppsStatus();
+  });
+
+  webOnApi("/api/apps/content/health", HTTP_GET, []() {
+    webSendAppsContentHealth();
+  });
+
+  webOnApi("/api/share/peers", HTTP_GET, []() {
+    webSendSharePeers();
+  });
+
+  webOnApi("/api/share/files", HTTP_GET, []() {
+    webSendShareFiles();
+  });
+
+  webOnApi("/api/share/download", HTTP_GET, []() {
+    String path = g_web_server.arg("path");
+    if (path.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_path\"}");
+      return;
+    }
+    File file;
+    String full_path;
+    if (!g_file_share_service.downloadFile(path.c_str(), &file, &full_path) || !file) {
+      g_web_server.send(404, "application/json", "{\"ok\":false,\"error\":\"share_file_missing\"}");
+      return;
+    }
+    const String lower = full_path;
+    const char* type = "application/octet-stream";
+    if (lower.endsWith(".json")) {
+      type = "application/json";
+    } else if (lower.endsWith(".txt")) {
+      type = "text/plain";
+    } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+      type = "image/jpeg";
+    } else if (lower.endsWith(".png")) {
+      type = "image/png";
+    } else if (lower.endsWith(".wav")) {
+      type = "audio/wav";
+    } else if (lower.endsWith(".mp3")) {
+      type = "audio/mpeg";
+    }
+    g_web_server.streamFile(file, type);
+    file.close();
+  });
+
+  webOnApi("/api/share/upload", HTTP_POST, []() {
+    String path = g_web_server.arg("path");
+    if (path.isEmpty()) {
+      path = g_web_server.arg("filename");
+    }
+    String payload = g_web_server.arg("plain");
+    if (payload.isEmpty()) {
+      payload = g_web_server.arg("payload");
+    }
+    const bool append_mode = g_web_server.arg("append") == "1";
+    const uint32_t offset = static_cast<uint32_t>(g_web_server.arg("offset").toInt());
+    if (path.isEmpty() || payload.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_path_or_payload\"}");
+      return;
+    }
+    String saved_path;
+    bool ok = false;
+    if (append_mode) {
+      File file;
+      String full_path;
+      if (g_file_share_service.downloadFile(path.c_str(), &file, &full_path) && file) {
+        file.close();
+      }
+      saved_path = String("/apps/shared/incoming/") + path;
+      if (saved_path.indexOf("..") >= 0) {
+        ok = false;
+      } else {
+        const char* mode = (offset == 0U) ? "w" : "a";
+        File out = LittleFS.open(saved_path.c_str(), mode);
+        if (out) {
+          ok = (out.write(reinterpret_cast<const uint8_t*>(payload.c_str()), payload.length()) == payload.length());
+          out.close();
+        }
+      }
+    } else {
+      ok = g_file_share_service.saveIncomingFile(path.c_str(),
+                                                 reinterpret_cast<const uint8_t*>(payload.c_str()),
+                                                 payload.length(),
+                                                 &saved_path);
+    }
+    DynamicJsonDocument response(256);
+    response["ok"] = ok;
+    response["path"] = path;
+    response["saved_path"] = saved_path;
+    response["append"] = append_mode;
+    response["offset"] = offset;
+    if (!ok) {
+      response["error"] = "share_upload_failed";
+    }
+    webSendJsonDocument(response, ok ? 200 : 500);
+  });
+
+  webOnApi("/api/share/pull", HTTP_POST, []() {
+    String peer_host = g_web_server.arg("peer_host");
+    uint16_t peer_port = static_cast<uint16_t>(g_web_server.arg("peer_port").toInt());
+    String remote_path = g_web_server.arg("remote_path");
+    String local_path = g_web_server.arg("local_path");
+    String token = g_web_server.arg("token");
+    StaticJsonDocument<512> request_json;
+    if (webParseJsonBody(&request_json)) {
+      if (peer_host.isEmpty()) {
+        peer_host = request_json["peer_host"] | request_json["host"] | "";
+      }
+      if (peer_port == 0U) {
+        peer_port = static_cast<uint16_t>(request_json["peer_port"] | request_json["port"] | 80U);
+      }
+      if (remote_path.isEmpty()) {
+        remote_path = request_json["remote_path"] | request_json["path"] | "";
+      }
+      if (local_path.isEmpty()) {
+        local_path = request_json["local_path"] | "";
+      }
+      if (token.isEmpty()) {
+        token = request_json["token"] | "";
+      }
+    }
+    if (token.isEmpty() && g_web_auth_token[0] != '\0') {
+      token = g_web_auth_token;
+    }
+    String saved_path;
+    String pull_error;
+    const bool ok = g_file_share_service.pullFromPeer(peer_host.c_str(),
+                                                      peer_port,
+                                                      remote_path.c_str(),
+                                                      local_path.c_str(),
+                                                      token.c_str(),
+                                                      &saved_path,
+                                                      &pull_error);
+    DynamicJsonDocument response(384);
+    response["ok"] = ok;
+    response["peer_host"] = peer_host;
+    response["peer_port"] = peer_port;
+    response["remote_path"] = remote_path;
+    response["saved_path"] = saved_path;
+    if (!ok) {
+      response["error"] = pull_error;
+    }
+    webSendJsonDocument(response, ok ? 200 : 500);
+  });
+
+  webOnApi("/api/apps/open", HTTP_POST, []() {
+    String app_id = g_web_server.arg("id");
+    String mode = g_web_server.arg("mode");
+    String source = g_web_server.arg("source");
+    StaticJsonDocument<512> request_json;
+    if (webParseJsonBody(&request_json)) {
+      if (app_id.isEmpty()) {
+        app_id = request_json["id"] | request_json["app_id"] | "";
+      }
+      if (mode.isEmpty()) {
+        mode = request_json["mode"] | "default";
+      }
+      if (source.isEmpty()) {
+        source = request_json["source"] | "api";
+      }
+    }
+    if (app_id.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_app_id\"}");
+      return;
+    }
+    AppStartRequest request = {};
+    copyText(request.id, sizeof(request.id), app_id.c_str());
+    copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
+    copyText(request.source, sizeof(request.source), source.isEmpty() ? "api" : source.c_str());
+    const bool ok = g_app_runtime_manager.startApp(request, millis());
+    StaticJsonDocument<256> response;
+    response["ok"] = ok;
+    response["id"] = request.id;
+    response["mode"] = request.mode;
+    response["source"] = request.source;
+    if (!ok) {
+      response["error"] = g_app_runtime_manager.current().last_error;
+    }
+    webSendJsonDocument(response, ok ? 200 : 409);
+  });
+
+  webOnApi("/api/apps/close", HTTP_POST, []() {
+    String app_id = g_web_server.arg("id");
+    String reason = g_web_server.arg("reason");
+    StaticJsonDocument<256> request_json;
+    if (webParseJsonBody(&request_json)) {
+      if (app_id.isEmpty()) {
+        app_id = request_json["id"] | request_json["app_id"] | "";
+      }
+      if (reason.isEmpty()) {
+        reason = request_json["reason"] | "api";
+      }
+    }
+    AppStopRequest request = {};
+    copyText(request.id, sizeof(request.id), app_id.c_str());
+    copyText(request.reason, sizeof(request.reason), reason.isEmpty() ? "api" : reason.c_str());
+    const bool ok = g_app_runtime_manager.stopApp(request, millis());
+    StaticJsonDocument<192> response;
+    response["ok"] = ok;
+    response["id"] = request.id;
+    response["reason"] = request.reason;
+    webSendJsonDocument(response, ok ? 200 : 400);
+  });
+
+  webOnApi("/api/apps/action", HTTP_POST, []() {
+    String app_id = g_web_server.arg("id");
+    String action_name = g_web_server.arg("action");
+    String payload = g_web_server.arg("payload");
+    String content_type = g_web_server.arg("content_type");
+    StaticJsonDocument<768> request_json;
+    if (webParseJsonBody(&request_json)) {
+      if (app_id.isEmpty()) {
+        app_id = request_json["id"] | request_json["app_id"] | "";
+      }
+      if (action_name.isEmpty()) {
+        action_name = request_json["action"] | request_json["name"] | "";
+      }
+      if (payload.isEmpty()) {
+        if (request_json["payload"].is<JsonVariantConst>()) {
+          serializeJson(request_json["payload"], payload);
+        } else {
+          payload = request_json["payload"] | "";
+        }
+      }
+      if (content_type.isEmpty()) {
+        content_type = request_json["content_type"] | "";
+      }
+    }
+    if (action_name.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_action\"}");
+      return;
+    }
+    if (content_type.isEmpty()) {
+      content_type = (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain";
+    }
+    AppAction action = {};
+    copyText(action.id, sizeof(action.id), app_id.c_str());
+    copyText(action.name, sizeof(action.name), action_name.c_str());
+    copyText(action.payload, sizeof(action.payload), payload.c_str());
+    copyText(action.content_type, sizeof(action.content_type), content_type.c_str());
+    const bool ok = g_app_runtime_manager.handleAction(action, millis());
+    StaticJsonDocument<256> response;
+    response["ok"] = ok;
+    response["id"] = action.id;
+    response["action"] = action.name;
+    response["content_type"] = action.content_type;
+    if (!ok) {
+      response["error"] = g_app_runtime_manager.current().last_error;
+    }
+    webSendJsonDocument(response, ok ? 200 : 409);
   });
 
   webOnApi("/api/network/wifi", HTTP_GET, []() {
@@ -7132,6 +7791,7 @@ void setup() {
   g_storage.ensurePath("/story/audio");
   g_storage.ensurePath("/story/apps");
   g_storage.ensurePath("/story/actions");
+  g_storage.ensurePath("/apps");
   g_storage.ensurePath("/picture");
   g_storage.ensurePath("/music");
   g_storage.ensurePath("/audio");
@@ -7149,6 +7809,7 @@ void setup() {
   RuntimeConfigService::load(g_storage, &g_network_cfg, &g_hardware_cfg, &g_camera_cfg, &g_media_cfg);
   loadBootProvisioningState();
   loadEspNowDeviceNameFromNvs();
+  g_file_share_service.begin(g_network_cfg.hostname, g_espnow_device_name);
   {
     BootModeStore::StartupMode startup_mode = BootModeStore::StartupMode::kStory;
     if (g_boot_mode_store.loadMode(&startup_mode)) {
@@ -7161,6 +7822,10 @@ void setup() {
                   g_boot_mode_store.isMediaValidated() ? 1U : 0U);
   }
   g_resource_coordinator.begin();
+  const bool app_registry_loaded = g_app_registry.loadFromFs(g_storage);
+  Serial.printf("[APP] registry loaded=%u count=%u\n",
+                app_registry_loaded ? 1U : 0U,
+                static_cast<unsigned int>(g_app_registry.descriptors().size()));
   Serial.printf("[MAIN] default scenario checksum=%lu\n",
                 static_cast<unsigned long>(g_storage.checksum(kDefaultScenarioFile)));
   Serial.printf("[MAIN] story storage sd=%u\n", g_storage.hasSdCard() ? 1U : 0U);
@@ -7301,6 +7966,18 @@ void setup() {
   g_runtime_services.media_cfg = &g_media_cfg;
   g_runtime_services.tick_runtime = runtimeTickBridge;
   g_runtime_services.dispatch_serial = serialDispatchBridge;
+
+  AppContext app_context = {};
+  app_context.audio = &g_audio;
+  app_context.camera = &g_camera;
+  app_context.hardware = &g_hardware;
+  app_context.media = &g_media;
+  app_context.network = &g_network;
+  app_context.storage = &g_storage;
+  app_context.ui = &g_ui;
+  app_context.resource = &g_resource_coordinator;
+  g_app_runtime_manager.configure(&g_app_registry, app_context);
+
   g_app_coordinator.begin(&g_runtime_services);
 }
 
@@ -7354,6 +8031,7 @@ void runRuntimeIteration(uint32_t now_ms) {
 
   const uint32_t network_started_us = perfMonitor().beginSample();
   g_network.update(now_ms);
+  g_file_share_service.update(now_ms);
   maybeRunEspNowDiscoveryRuntime(now_ms);
   perfMonitor().endSample(PerfSection::kNetworkUpdate, network_started_us);
   if (g_hardware_started) {
@@ -7502,6 +8180,7 @@ void runRuntimeIteration(uint32_t now_ms) {
     g_amp_player.tick(now_ms);
   }
 #endif
+  g_app_runtime_manager.tick(now_ms);
   g_resource_coordinator.update(g_ui.memorySnapshot(), now_ms);
   applyMicRuntimePolicy();
   RuntimeMetrics::instance().noteUiFrame(now_ms);

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <FS.h>
 
 class AudioManager;
 
@@ -56,8 +57,14 @@ class MediaManager {
   String resolveKindDir(const char* kind) const;
   String sanitizeFilename(const char* hint, const char* default_prefix, const char* extension) const;
   bool ensureDir(const char* path) const;
-  bool writeEmptyWav(const char* path) const;
+  bool openRecordingWav(const char* path);
+  bool appendRecordingChunk();
+  bool finalizeRecordingWav();
+  bool writeWavHeader(File& file, uint32_t data_size) const;
 
   Config config_;
   Snapshot snapshot_;
+  File recording_file_;
+  uint32_t recording_data_bytes_ = 0U;
+  uint32_t next_capture_ms_ = 0U;
 };
