@@ -1,0 +1,21 @@
+{
+  "id": "dictaphone",
+  "title": "Dictaphone",
+  "category": "capture",
+  "entry_screen": "SCENE_RECORDER",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/dictaphone/icon.png",
+  "required_capabilities": 194,
+  "optional_capabilities": 32,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/dictaphone/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/dictaphone/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

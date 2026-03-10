@@ -1,0 +1,21 @@
+{
+  "id": "flashlight",
+  "title": "Lampe de Poche",
+  "category": "utility",
+  "entry_screen": "SCENE_FLASHLIGHT",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/flashlight/icon.png",
+  "required_capabilities": 136,
+  "optional_capabilities": 0,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/flashlight/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/flashlight/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "audio_player",
+  "title": "Lecteur Audio",
+  "category": "media",
+  "entry_screen": "SCENE_AUDIO_PLAYER",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/audio_player/icon.png",
+  "required_capabilities": 193,
+  "optional_capabilities": 16,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "asset_manifest": "/apps/audio_player/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/audio_player/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

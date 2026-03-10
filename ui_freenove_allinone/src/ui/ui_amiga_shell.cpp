@@ -2,26 +2,59 @@
 #include "ui/ui_amiga_shell.h"
 #include "hardware_manager.h"
 #include "ui_manager.h"
+#include "app/app_registry.h"
 
 AmigaUIShell g_amiga_shell;
 
-// App catalog - 7 core apps with Amiga theme colors
-const AmigaUIShell::AppIcon AmigaUIShell::APPS[7] = {
-    {"Audio", "audio_player", 0x00FFFF},     // Cyan speaker
-    {"Calculate", "calculator", 0xFFFF00},   // Yellow numbers
-    {"Timer", "timer_tools", 0xFF00FF},      // Magenta clock
-    {"Light", "flashlight", 0xFFFF00},       // Yellow torch
-    {"Camera", "camera_video", 0x0088FF},    // Blue lens
-    {"Mic", "dictaphone", 0x00FF88},         // Green waves
-    {"QR", "qr_scanner", 0xFFFF00},          // Yellow scanner
-};
-
-bool AmigaUIShell::init(HardwareManager* hw, UiManager* ui) {
+bool AmigaUIShell::init(HardwareManager* hw, UiManager* ui, AppRegistry* registry) {
   hardware_ = hw;
   ui_ = ui;
+  registry_ = registry;
   
-  Serial.println("[UI_AMIGA] Initialized Amiga shell");
+  loadAppsFromRegistry();
+  Serial.printf("[UI_AMIGA] Initialized Amiga shell with %u apps\n", apps_.size());
   return true;
+}
+
+void AmigaUIShell::loadAppsFromRegistry() {
+  apps_.clear();
+  
+  if (registry_ == nullptr) {
+    Serial.println("[UI_AMIGA] Warning: No registry provided, using empty catalog");
+    return;
+  }
+  
+  const auto& descriptors = registry_->descriptors();
+  
+  for (const auto& desc : descriptors) {
+    if (desc.enabled) {
+      AppIcon icon;
+      icon.name = String(desc.title);
+      icon.app_id = String(desc.id);
+      icon.color = getAppColor(apps_.size());
+      apps_.push_back(icon);
+      
+      Serial.printf("[UI_AMIGA] Loaded app: %s (%s) color=%06X\n",
+                    icon.name.c_str(), icon.app_id.c_str(), icon.color);
+    }
+  }
+  
+  Serial.printf("[UI_AMIGA] Loaded %u enabled apps from registry\n", apps_.size());
+}
+
+uint32_t AmigaUIShell::getAppColor(size_t index) const {
+  // Cycle through Amiga theme colors (cyan, yellow, magenta, blue, green)
+  static const uint32_t AMIGA_COLORS[] = {
+    0x00FFFF,  // Cyan
+    0xFFFF00,  // Yellow
+    0xFF00FF,  // Magenta
+    0x0088FF,  // Blue
+    0x00FF88,  // Green
+    0xFF8800,  // Orange
+    0xFF0088,  // Pink
+    0x88FF00,  // Lime
+  };
+  return AMIGA_COLORS[index % (sizeof(AMIGA_COLORS) / sizeof(AMIGA_COLORS[0]))];
 }
 
 void AmigaUIShell::onStart() {
@@ -54,12 +87,12 @@ void AmigaUIShell::onTick(uint32_t dt_ms) {
 }
 
 void AmigaUIShell::selectApp(uint8_t grid_index) {
-  if (grid_index < 7) {  // We have 7 apps
+  if (grid_index < apps_.size()) {
     selected_index_ = grid_index;
     animating_ = true;
     animation_elapsed_ms_ = 0;
     
-    Serial.printf("[UI_AMIGA] Selected: %s (%u)\n", APPS[grid_index].name, grid_index);
+    Serial.printf("[UI_AMIGA] Selected: %s (%u)\n", apps_[grid_index].name.c_str(), grid_index);
     
     // Flash effect on selection
     for (int i = 0; i < 2; i++) {
@@ -69,9 +102,9 @@ void AmigaUIShell::selectApp(uint8_t grid_index) {
 }
 
 void AmigaUIShell::launchSelectedApp() {
-  if (selected_index_ < 7) {
-    const AppIcon& app = APPS[selected_index_];
-    Serial.printf("[UI_AMIGA] Launching: %s\n", app.app_id);
+  if (selected_index_ < apps_.size()) {
+    const AppIcon& app = apps_[selected_index_];
+    Serial.printf("[UI_AMIGA] Launching: %s\n", app.app_id.c_str());
     
     // Transition effect
     playTransitionFX();
@@ -84,13 +117,13 @@ void AmigaUIShell::drawMainMenu() {
   // Clear with black background (Amiga style)
   // In real implementation, would use LVGL: lv_obj_set_style_bg_color(...)
   
-  Serial.println("[UI_AMIGA] Drawing main menu");
+  Serial.printf("[UI_AMIGA] Drawing main menu (%u apps)\n", apps_.size());
   
-  // Draw grid of 7 apps (could expand to 4x4 = 16 later)
+  // Draw grid of apps (could expand to 4x4 = 16 later)
   uint16_t start_x = 16;
   uint16_t start_y = 32;
   
-  for (uint8_t i = 0; i < 7; i++) {
+  for (size_t i = 0; i < apps_.size(); i++) {
     uint16_t col = i % GRID_COLS;
     uint16_t row = i / GRID_COLS;
     
@@ -98,7 +131,7 @@ void AmigaUIShell::drawMainMenu() {
     uint16_t y = start_y + (row * (ICON_SIZE + ICON_SPACING));
     
     bool selected = (i == selected_index_);
-    drawIcon(x, y, APPS[i], selected);
+    drawIcon(x, y, apps_[i], selected);
   }
 }
 
@@ -107,7 +140,7 @@ void AmigaUIShell::drawIcon(uint16_t x, uint16_t y, const AppIcon& icon, bool se
   uint32_t color = selected ? 0x00FFFF : icon.color;  // Cyan when selected
   
   Serial.printf("[UI_AMIGA] Icon: %s at (%u,%u) color=%06X %s\n",
-                icon.name, x, y, color, selected ? "(selected)" : "");
+                icon.name.c_str(), x, y, color, selected ? "(selected)" : "");
   
   // In real LVGL implementation:
   // - Draw rectangle with rounded corners
@@ -131,7 +164,7 @@ void AmigaUIShell::drawPulseEffect(uint16_t x, uint16_t y, float intensity) {
 }
 
 void AmigaUIShell::drawSelectionHighlight(uint8_t index) {
-  if (index < 7) {
+  if (index < apps_.size()) {
     uint16_t col = index % GRID_COLS;
     uint16_t row = index / GRID_COLS;
     
@@ -164,4 +197,94 @@ void AmigaUIShell::drawFadeTransition(uint8_t opacity) {
   Serial.printf("[UI_AMIGA] Fade: opacity=%u/255\n", opacity);
   
   // In LVGL: lv_obj_set_style_opa(overlay, opacity, LV_PART_MAIN)
+}
+
+uint8_t AmigaUIShell::getTouchGridIndex(uint16_t x, uint16_t y) {
+  // Map display coordinates to grid index (0-15)
+  // Grid is 4x4 with icons at fixed positions starting from (GRID_START_X, GRID_START_Y)
+  
+  // Check if touch is within grid bounds
+  uint16_t grid_end_x = GRID_START_X + (GRID_COLS * (ICON_SIZE + ICON_SPACING));
+  uint16_t grid_end_y = GRID_START_Y + (GRID_ROWS * (ICON_SIZE + ICON_SPACING));
+  
+  if (x < GRID_START_X || x >= grid_end_x ||
+      y < GRID_START_Y || y >= grid_end_y) {
+    return 255;  // Out of bounds
+  }
+  
+  // Calculate relative position within grid
+  uint16_t rel_x = x - GRID_START_X;
+  uint16_t rel_y = y - GRID_START_Y;
+  
+  // Determine column and row
+  uint8_t col = rel_x / (ICON_SIZE + ICON_SPACING);
+  uint8_t row = rel_y / (ICON_SIZE + ICON_SPACING);
+  
+  // Clamp to valid grid bounds
+  if (col >= GRID_COLS) col = GRID_COLS - 1;
+  if (row >= GRID_ROWS) row = GRID_ROWS - 1;
+  
+  uint8_t index = row * GRID_COLS + col;
+  
+  // Only return valid indices for loaded apps
+  return (index < apps_.size()) ? index : 255;
+}
+
+void AmigaUIShell::handleTouchInput(uint16_t x, uint16_t y) {
+  uint8_t grid_index = getTouchGridIndex(x, y);
+  
+  if (grid_index < apps_.size()) {
+    Serial.printf("[UI_AMIGA] Touch detected at grid[%u,%u] -> app index %u\n",
+                  x, y, grid_index);
+    selectApp(grid_index);
+    
+    // Auto-launch on tap (can be changed to "select-then-press-to-launch" later)
+    delay(200);  // Brief visual feedback delay
+    launchSelectedApp();
+  } else {
+    Serial.printf("[UI_AMIGA] Touch out of bounds: (%u,%u)\n", x, y);
+  }
+}
+
+void AmigaUIShell::handleButtonInput(uint8_t button_id) {
+  // Button mapping for grid navigation:
+  // Button 0 (UP):     Move selection up (previous row)
+  // Button 1 (SELECT): Launch selected app
+  // Button 2 (DOWN):   Move selection down (next row)
+  // Button 3 (MENU):   Future: return to launcher or show menu
+  
+  switch (button_id) {
+    case 0: {  // UP button - move to previous row
+      if (selected_index_ >= GRID_COLS) {
+        selectApp(selected_index_ - GRID_COLS);
+        Serial.printf("[UI_AMIGA] UP button: moved to index %u\n", selected_index_);
+      }
+      break;
+    }
+    
+    case 1: {  // SELECT button - launch app
+      if (selected_index_ < apps_.size()) {
+        Serial.printf("[UI_AMIGA] SELECT button: launching app %u\n", selected_index_);
+        launchSelectedApp();
+      }
+      break;
+    }
+    
+    case 2: {  // DOWN button - move to next row
+      if (selected_index_ + GRID_COLS < apps_.size()) {
+        selectApp(selected_index_ + GRID_COLS);
+        Serial.printf("[UI_AMIGA] DOWN button: moved to index %u\n", selected_index_);
+      }
+      break;
+    }
+    
+    case 3: {  // MENU button - future use
+      Serial.println("[UI_AMIGA] MENU button: reserved for future use");
+      break;
+    }
+    
+    default:
+      Serial.printf("[UI_AMIGA] Unknown button: %u\n", button_id);
+      break;
+  }
 }

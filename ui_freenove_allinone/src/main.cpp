@@ -18,6 +18,7 @@
 #include "media_manager.h"
 #include "network_manager.h"
 #include "auth/auth_service.h"
+#include "app/app_registry.h"
 #include "core/wifi_config.h"
 #include "core/mutex_manager.h"
 #include "runtime/la_trigger_service.h"
@@ -48,6 +49,9 @@ NetworkManager g_network;
 HardwareManager g_hardware;
 CameraManager g_camera;
 MediaManager g_media;
+
+// Declared in app/main.cpp
+extern AppRegistry g_app_registry;
 RuntimeNetworkConfig g_network_cfg;
 RuntimeHardwareConfig g_hardware_cfg;
 CameraManager::Config g_camera_cfg;
@@ -3702,7 +3706,7 @@ void setup() {
   g_ui.begin();
   
   // Initialize Amiga UI Shell for grid-based app launcher
-  g_amiga_shell.init(&g_hardware, &g_ui);
+  g_amiga_shell.init(&g_hardware, &g_ui, &g_app_registry);
   g_amiga_shell.onStart();
   
   g_ui.setLaDetectionState(false, 0U, 0U, g_hardware_cfg.mic_la_stable_ms, 0U, g_hardware_cfg.mic_la_timeout_ms);
@@ -3729,6 +3733,7 @@ void loop() {
   while (g_buttons.pollEvent(&event)) {
     Serial.printf("[MAIN] button key=%u long=%u\n", event.key, event.long_press ? 1 : 0);
     g_ui.handleButton(event.key, event.long_press);
+    g_amiga_shell.handleButtonInput(event.key);
     notifyScenarioButtonGuarded(event.key, event.long_press, now_ms, "physical_button");
     if (g_hardware_started) {
       g_hardware.noteButton(event.key, event.long_press, now_ms);
@@ -3738,6 +3743,8 @@ void loop() {
   TouchPoint touch;
   if (g_touch.poll(&touch)) {
     g_ui.handleTouch(touch.x, touch.y, touch.touched);
+    // Route touch input to Amiga UI shell
+    g_amiga_shell.handleTouchInput(touch.x, touch.y);
   } else {
     g_ui.handleTouch(0, 0, false);
   }

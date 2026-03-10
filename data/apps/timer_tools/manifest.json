@@ -1,0 +1,21 @@
+{
+  "id": "timer_tools",
+  "title": "Chronometre/Minuteur",
+  "category": "utility",
+  "entry_screen": "SCENE_TIMER",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/timer_tools/icon.png",
+  "required_capabilities": 128,
+  "optional_capabilities": 0,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/timer_tools/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/timer_tools/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

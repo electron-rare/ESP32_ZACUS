@@ -4,10 +4,13 @@
 
 #include "ui_manager.h"
 #include <Arduino.h>
+#include <vector>
+
+class AppRegistry;
 
 class AmigaUIShell {
  public:
-  bool init(HardwareManager* hw, UiManager* ui);
+  bool init(HardwareManager* hw, UiManager* ui, AppRegistry* registry);
   void onStart();
   void onStop();
   void onTick(uint32_t dt_ms);
@@ -15,6 +18,9 @@ class AmigaUIShell {
   // Navigation
   void selectApp(uint8_t grid_index);
   void launchSelectedApp();
+  void handleTouchInput(uint16_t x, uint16_t y);
+  void handleButtonInput(uint8_t button_id);
+  uint8_t getTouchGridIndex(uint16_t x, uint16_t y);
   
   // Visual
   void drawMainMenu();
@@ -25,6 +31,7 @@ class AmigaUIShell {
  private:
   HardwareManager* hardware_ = nullptr;
   UiManager* ui_ = nullptr;
+  AppRegistry* registry_ = nullptr;
   
   // Current state
   uint8_t selected_index_ = 0;  // 0-15 for 4x4 grid
@@ -44,17 +51,24 @@ class AmigaUIShell {
   static constexpr uint16_t ICON_SPACING = 16;
   
   struct AppIcon {
-    const char* name;
-    const char* app_id;
+    String name;
+    String app_id;
     uint32_t color;
   };
   
-  // App catalog (7 core apps)
-  static const AppIcon APPS[7];
+  // App catalog (dynamically loaded from registry)
+  std::vector<AppIcon> apps_;
+  
+  void loadAppsFromRegistry();
+  uint32_t getAppColor(size_t index) const;
   
   void drawIcon(uint16_t x, uint16_t y, const AppIcon& icon, bool selected);
   void drawPulseEffect(uint16_t x, uint16_t y, float intensity);
   void drawFadeTransition(uint8_t opacity);
+  
+  // Grid-to-pixel offset calculation
+  static constexpr uint16_t GRID_START_X = 16;
+  static constexpr uint16_t GRID_START_Y = 32;
 };
 
 extern AmigaUIShell g_amiga_shell;

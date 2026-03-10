@@ -1,0 +1,21 @@
+{
+  "id": "qr_scanner",
+  "title": "Lecteur QR Code",
+  "category": "capture",
+  "entry_screen": "SCENE_QR_DETECTOR",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/qr_scanner/icon.png",
+  "required_capabilities": 132,
+  "optional_capabilities": 0,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/qr_scanner/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/qr_scanner/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

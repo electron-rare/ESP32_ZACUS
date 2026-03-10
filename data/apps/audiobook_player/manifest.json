@@ -1,0 +1,21 @@
+{
+  "id": "audiobook_player",
+  "title": "Livres Audio",
+  "category": "media",
+  "entry_screen": "SCENE_AUDIOBOOK",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/audiobook_player/icon.png",
+  "required_capabilities": 193,
+  "optional_capabilities": 48,
+  "supports_offline": true,
+  "supports_streaming": true,
+  "asset_manifest": "/apps/audiobook_player/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/audiobook_player/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "calculator",
+  "title": "Calculatrice",
+  "category": "utility",
+  "entry_screen": "SCENE_CALCULATOR",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/calculator/icon.png",
+  "required_capabilities": 128,
+  "optional_capabilities": 0,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/calculator/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/calculator/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

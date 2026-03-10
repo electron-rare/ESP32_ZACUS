@@ -1,0 +1,21 @@
+{
+  "id": "camera_video",
+  "title": "Appareil Photo/Video",
+  "category": "capture",
+  "entry_screen": "SCENE_PHOTO_MANAGER",
+  "enabled": true,
+  "version": "1.0.0",
+  "icon_path": "/apps/camera_video/icon.png",
+  "required_capabilities": 196,
+  "optional_capabilities": 32,
+  "supports_offline": true,
+  "supports_streaming": false,
+  "asset_manifest": "/apps/camera_video/manifest.json",
+  "assets": {
+    "icons": [
+      "/apps/camera_video/icon.png"
+    ],
+    "scenes": [],
+    "media": []
+  }
+}

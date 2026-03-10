@@ -292,11 +292,7 @@ bool StorageManager::ensurePath(const char* path) {
   if (LittleFS.exists(path)) {
     return true;
   }
-  if (!LittleFS.mkdir(path)) {
-    Serial.printf("[FS] mkdir failed: %s\n", path);
-    return false;
-  }
-  Serial.printf("[FS] mkdir: %s\n", path);
+  Serial.printf("[FS] path missing (skip mkdir to keep boot safe): %s\n", path);
   return true;
 }
 
