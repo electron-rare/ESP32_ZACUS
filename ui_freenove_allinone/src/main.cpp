@@ -18,6 +18,7 @@
 #include "network_manager.h"
 #include "auth/auth_service.h"
 #include "core/wifi_config.h"
+#include "core/mutex_manager.h"
 #include "runtime/la_trigger_service.h"
 #include "runtime/runtime_config_service.h"
 #include "runtime/runtime_config_types.h"
@@ -966,6 +967,12 @@ void printEspNowStatusJson() {
 void onAudioFinished(const char* track, void* ctx) {
   (void)ctx;
   Serial.printf("[MAIN] audio done: %s\n", track != nullptr ? track : "unknown");
+  
+  ScenarioLock lock(100);  // Timeout 100ms (ISR context, must be short)
+  if (!lock.acquired()) {
+    Serial.println("[MUTEX] WARN: Audio callback could not notify scenario (mutex held)");
+    return;  // Skip notification if mutex contention
+  }
   g_scenario.notifyAudioDone(millis());
 }
 
@@ -1942,6 +1949,16 @@ void webBuildStatusDocument(StaticJsonDocument<4096>* out_document) {
   if (out_document == nullptr) {
     return;
   }
+
+  DualLock lock(500);  // Acquire audio+scenario, timeout 500ms (HTTP can wait)
+  if (!lock.acquired()) {
+    Serial.println("[MUTEX] WARN: Web status locked, returning error");
+    out_document->clear();
+    (*out_document)["ok"] = false;
+    (*out_document)["error"] = "mutex_timeout";
+    return;
+  }
+
   const NetworkManager::Snapshot net = g_network.snapshot();
   const ScenarioSnapshot scenario = g_scenario.snapshot();
 
@@ -2454,6 +2471,12 @@ bool dispatchScenarioEventByName(const char* event_name, uint32_t now_ms) {
   std::strncpy(normalized, event_name, sizeof(normalized) - 1U);
   toUpperAsciiInPlace(normalized);
 
+  ScenarioLock lock(1000);  // Timeout 1000ms for critical event dispatch
+  if (!lock.acquired()) {
+    Serial.printf("[MUTEX] ERROR: Cannot dispatch event %s (timeout)\n", normalized);
+    return false;
+  }
+
   const ScenarioSnapshot current = g_scenario.snapshot();
   if (!g_la_dispatch_in_progress && shouldEnforceLaMatchOnly(current)) {
     if (std::strcmp(normalized, "UNLOCK") == 0 || std::strcmp(normalized, "BTN_NEXT") == 0 ||
@@ -2733,7 +2756,7 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
         "ESPNOW_ON ESPNOW_OFF ESPNOW_STATUS ESPNOW_STATUS_JSON ESPNOW_PEER_ADD <mac> ESPNOW_PEER_DEL <mac> ESPNOW_PEER_LIST "
         "ESPNOW_SEND <mac|broadcast> <text|json> "
         "AUDIO_TEST AUDIO_TEST_FS AUDIO_PROFILE <idx> AUDIO_STATUS VOL <0..21> AUDIO_STOP STOP "
-        "WDT [status|TRIGGER|HANG <sec>]");
+        "WDT [status|TRIGGER|HANG <sec>] MUTEX_STATUS");
     return;
   }
   if (std::strcmp(command, "WDT") == 0) {
@@ -2769,6 +2792,18 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
       }
     }
     Serial.println("ERR WDT_ARG: Use WDT [status|TRIGGER|HANG <sec>]");
+    return;
+  }
+  if (std::strcmp(command, "MUTEX_STATUS") == 0) {
+    // Display mutex performance statistics
+    Serial.printf("MUTEX_STATUS audio_locks=%lu scenario_locks=%lu audio_timeouts=%lu "
+                  "scenario_timeouts=%lu max_audio_wait_us=%lu max_scenario_wait_us=%lu\n",
+                  MutexManager::audioLockCount(),
+                  MutexManager::scenarioLockCount(),
+                  MutexManager::audioTimeoutCount(),
+                  MutexManager::scenarioTimeoutCount(),
+                  MutexManager::maxAudioWaitUs(),
+                  MutexManager::maxScenarioWaitUs());
     return;
   }
   if (std::strcmp(command, "STATUS") == 0) {
@@ -3265,6 +3300,14 @@ void setup() {
                 kDefaultWatchdogTimeoutSec);
   // ===== END WATCHDOG INITIALIZATION =====
 
+  // ===== MUTEX INITIALIZATION (CRITICAL - BEFORE AUDIO/SCENARIO) =====
+  if (!MutexManager::init()) {
+    Serial.println("[MUTEX] FATAL: Mutex init failed!");
+  } else {
+    Serial.println("[MUTEX] Ready: dual-mutex strategy enabled");
+  }
+  // ===== END MUTEX INITIALIZATION =====
+
   if (!g_storage.begin()) {
     Serial.println("[MAIN] storage init failed");
   }
@@ -3475,10 +3518,27 @@ void loop() {
                   stepIdFromSnapshot(after));
   }
 
-  g_audio.update();
-  g_media.update(now_ms, &g_audio);
-  g_scenario.tick(now_ms);
-  startPendingAudioIfAny();
+  // Audio update with mutex protection (50ms timeout to avoid blocking loop)
+  {
+    AudioLock lock(50);
+    if (lock.acquired()) {
+      g_audio.update();
+      g_media.update(now_ms, &g_audio);
+    } else {
+      Serial.println("[MUTEX] WARN: Skipped audio update (contention)");
+    }
+  }
+
+  // Scenario tick with separate lock (allows parallelism with audio)
+  {
+    ScenarioLock lock(50);
+    if (lock.acquired()) {
+      g_scenario.tick(now_ms);
+      startPendingAudioIfAny();
+    } else {
+      Serial.println("[MUTEX] WARN: Skipped scenario tick (contention)");
+    }
+  }
   uint32_t la_gate_elapsed_ms = 0U;
   if (g_la_trigger.gate_active && g_la_trigger.gate_entered_ms > 0U) {
     la_gate_elapsed_ms = now_ms - g_la_trigger.gate_entered_ms;
