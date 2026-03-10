@@ -16,6 +16,12 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #include <freertos/task.h>
+#if defined(ARDUINO_USB_MODE) && (ARDUINO_USB_MODE != 0) && __has_include(<HWCDC.h>)
+#include <HWCDC.h>
+#define ZACUS_HAS_USB_HWCDC 1
+#else
+#define ZACUS_HAS_USB_HWCDC 0
+#endif
 #if __has_include(<SD_MMC.h>)
 #include <SD_MMC.h>
 #define ZACUS_HAS_SD_AUDIO 1
@@ -39,6 +45,7 @@
 #include "app/runtime_scene_service.h"
 #include "app/runtime_serial_service.h"
 #include "app/runtime_web_service.h"
+#include "drivers/display/display_hal.h"
 #include "runtime/app_coordinator.h"
 #include "runtime/la_trigger_service.h"
 #include "runtime/perf/perf_monitor.h"
@@ -72,8 +79,8 @@ namespace {
 
 constexpr const char* kDefaultScenarioFile = "/story/scenarios/DEFAULT.json";
 constexpr const char* kFirmwareName = "freenove_esp32s3";
-constexpr const char* kDiagAudioFile = "/music/boot_radio.mp3";
-constexpr const char* kUsonAmbientTrack = "/music/boot_radio.mp3";
+constexpr const char* kDiagAudioFile = "/apps/audio_player/audio/default.mp3";
+constexpr const char* kUsonAmbientTrack = "/apps/audio_player/audio/default.mp3";
 constexpr uint8_t kUsonAmbientVolumeFixed = 21U;
 constexpr uint8_t kUsonAmbientVolumeMin =
     (kUsonAmbientVolumeFixed > FREENOVE_AUDIO_MAX_VOLUME) ? FREENOVE_AUDIO_MAX_VOLUME : kUsonAmbientVolumeFixed;
@@ -83,6 +90,7 @@ constexpr uint32_t kUsonAmbientDelayMinMs = 1000U;
 constexpr uint32_t kUsonAmbientDelayMaxMs = 2000U;
 constexpr uint32_t kWarningSirenBeatIntervalMs = 700U;
 constexpr size_t kSerialLineCapacity = 192U;
+constexpr size_t kUsbConsoleRxBufferSize = 256U;
 constexpr bool kBootDiagnosticTone = true;
 constexpr bool kAutoSyncStoryFromSdOnBoot = false;
 #if defined(ZACUS_SPRINT_DIAG_MODE) && (ZACUS_SPRINT_DIAG_MODE != 0)
@@ -152,7 +160,7 @@ struct SceneAmbientAudioFxState {
   bool enabled = false;
   bool non_interruptive = true;
   char mode[24] = "single_track";
-  char track[64] = "/music/boot_radio.mp3";
+  char track[64] = "/apps/audio_player/audio/default.mp3";
   char playlist_root[96] = "";
   bool playlist_recursive = true;
   uint8_t volume_min = kUsonAmbientVolumeMin;
@@ -208,11 +216,20 @@ bool g_has_ring_sent_for_win_etape = false;
 bool g_win_etape_ui_refresh_pending = false;
 bool g_boot_media_manager_mode = false;
 bool g_amiga_shell_mode_boot = true;  // Force boot to Amiga UI Shell instead of story scenario
+bool g_safe_diagnostic_mode = false;
+bool g_ui_started = false;
+bool g_boot_network_deferred = false;
+bool g_safe_diag_display_ready = false;
+uint8_t g_safe_diag_last_button = 0U;
+bool g_safe_diag_last_button_long = false;
+uint32_t g_safe_diag_last_button_ms = 0U;
+uint32_t g_safe_diag_last_redraw_ms = 0U;
 uint8_t g_lcd_backlight_level = 80U;
 uint8_t g_lcd_backlight_base_level = 80U;
 bool g_setup_mode = true;
 bool g_web_auth_required = false;
 bool g_resource_profile_auto = true;
+bool g_usb_console_ready = false;
 char g_web_auth_token[kWebAuthTokenCapacity] = {0};
 char g_espnow_device_name[kEspNowDeviceNameCapacity] = "U_SON";
 bool g_espnow_discovery_runtime_enabled = !kSprintDiagMode;
@@ -280,7 +297,7 @@ const char* audioPackToFile(const char* pack_id) {
     return nullptr;
   }
   if (std::strcmp(pack_id, "PACK_BOOT_RADIO") == 0) {
-    return "/music/boot_radio.mp3";
+    return "/apps/audio_player/audio/default.mp3";
   }
   if (std::strcmp(pack_id, "PACK_SONAR_HINT") == 0) {
     return "/music/sonar_hint.mp3";
@@ -825,6 +842,12 @@ void collectAmbientPlaylistFiles(fs::FS& file_system,
         prefix += "/";
       }
       const unsigned int prefix_len = static_cast<unsigned int>(prefix.length());
+      String prefix_no_leading_slash = prefix;
+      if (prefix_no_leading_slash.startsWith("/")) {
+        prefix_no_leading_slash.remove(0, 1);
+      }
+      const unsigned int prefix_no_leading_slash_len =
+          static_cast<unsigned int>(prefix_no_leading_slash.length());
       File entry = fs_root.openNextFile();
       while (entry) {
         String entry_name = entry.name();
@@ -833,17 +856,16 @@ void collectAmbientPlaylistFiles(fs::FS& file_system,
         }
         if (!entry.isDirectory() && isAmbientAudioFilePath(entry_name)) {
           int prefix_pos = entry_name.indexOf(prefix);
+          unsigned int matched_prefix_len = prefix_len;
           if (prefix_pos < 0) {
-            String prefix_no_leading_slash = prefix;
-            if (prefix_no_leading_slash.startsWith("/")) {
-              prefix_no_leading_slash.remove(0, 1);
-            }
             prefix_pos = entry_name.indexOf(prefix_no_leading_slash);
+            matched_prefix_len = prefix_no_leading_slash_len;
           }
           if (prefix_pos >= 0) {
             bool include = true;
             if (!recursive) {
-              const unsigned int child_start = static_cast<unsigned int>(prefix_pos) + prefix_len;
+              const unsigned int child_start =
+                  static_cast<unsigned int>(prefix_pos) + matched_prefix_len;
               include = entry_name.indexOf('/', child_start) < 0;
             }
             if (include) {
@@ -886,6 +908,19 @@ void collectAmbientPlaylistFiles(fs::FS& file_system,
   dir.close();
 }
 
+namespace {
+struct AmbientPlaylistCache {
+  String root;
+  bool recursive = false;
+  bool use_sd = false;
+  uint32_t expires_at_ms = 0U;
+  std::vector<String> files;
+};
+
+AmbientPlaylistCache g_ambient_playlist_cache;
+constexpr uint32_t kAmbientPlaylistCacheTtlMs = 12000U;
+}  // namespace
+
 bool chooseAmbientPlaylistTrack(const SceneAmbientAudioFxState& ambient, uint32_t now_ms, String* out_track) {
   if (out_track == nullptr) {
     return false;
@@ -902,18 +937,36 @@ bool chooseAmbientPlaylistTrack(const SceneAmbientAudioFxState& ambient, uint32_
     return false;
   }
 
-  std::vector<String> files;
-  files.reserve(24U);
-  collectAmbientPlaylistFiles(*file_system, root, ambient.playlist_recursive, 0U, &files);
+  const bool cache_key_match =
+      (g_ambient_playlist_cache.root == root) && (g_ambient_playlist_cache.recursive == ambient.playlist_recursive) &&
+      (g_ambient_playlist_cache.use_sd == use_sd);
+  const bool cache_fresh =
+      cache_key_match &&
+      (static_cast<int32_t>(now_ms - g_ambient_playlist_cache.expires_at_ms) < 0);
+
+  if (!cache_fresh) {
+    std::vector<String> refreshed_files;
+    refreshed_files.reserve(24U);
+    collectAmbientPlaylistFiles(*file_system, root, ambient.playlist_recursive, 0U, &refreshed_files);
+    g_ambient_playlist_cache.root = root;
+    g_ambient_playlist_cache.recursive = ambient.playlist_recursive;
+    g_ambient_playlist_cache.use_sd = use_sd;
+    g_ambient_playlist_cache.expires_at_ms = now_ms + kAmbientPlaylistCacheTtlMs;
+    g_ambient_playlist_cache.files.swap(refreshed_files);
+  }
+
+  const std::vector<String>& files = g_ambient_playlist_cache.files;
   if (files.empty()) {
     return false;
   }
 
   const uint32_t seed = hashSceneFxSeed(now_ms ^ 0x59A31BUL ^ static_cast<uint32_t>(files.size()));
   const size_t index = static_cast<size_t>(seed % static_cast<uint32_t>(files.size()));
-  const String selected = files[index];
+  const String& selected = files[index];
   if (use_sd) {
-    *out_track = String("/sd") + selected;
+    out_track->reserve(selected.length() + 3U);
+    *out_track = "/sd";
+    *out_track += selected;
   } else {
     *out_track = selected;
   }
@@ -1813,6 +1866,198 @@ void logBuildMemoryPolicy() {
     Serial.println("[CFG] WARN camera framebuffer PSRAM flags mismatch");
   }
 #endif
+}
+
+void applySafeDiagnosticBootPolicy() {
+#if defined(ARDUINO_ARCH_ESP32)
+  const BootHeapSnapshot heap = bootCaptureHeapSnapshot();
+  g_safe_diagnostic_mode = !heap.psram_found;
+#else
+  g_safe_diagnostic_mode = false;
+#endif
+  if (!g_safe_diagnostic_mode) {
+    return;
+  }
+
+  g_network_cfg.espnow_enabled_on_boot = false;
+  g_hardware_cfg.enabled_on_boot = false;
+  g_hardware_cfg.mic_enabled = false;
+  g_camera_cfg.enabled_on_boot = false;
+  g_espnow_discovery_runtime_enabled = false;
+  g_amiga_shell_mode_boot = false;
+
+  Serial.println("[BOOT] safe diagnostic mode enabled: PSRAM required, app stack disabled");
+}
+
+constexpr uint32_t kBootNetworkMinFreeHeap = 160000U;
+constexpr uint32_t kBootNetworkMinLargestInternal = 120000U;
+
+const char* bootNetworkDeferReason(const BootHeapSnapshot& heap, uint32_t free_heap) {
+  if (kBootEspNowOnlyMode) {
+    return "espnow_only_mode";
+  }
+  if (free_heap < kBootNetworkMinFreeHeap) {
+    return "free_heap_low";
+  }
+  if (heap.heap_internal_largest < kBootNetworkMinLargestInternal) {
+    return "largest_internal_low";
+  }
+  return "";
+}
+
+bool shouldDeferBootNetworkBringup(const BootHeapSnapshot& heap, uint32_t free_heap) {
+  return bootNetworkDeferReason(heap, free_heap)[0] != '\0';
+}
+
+int16_t activeDisplayWidth() {
+  return ((FREENOVE_LCD_ROTATION & 0x1U) != 0U) ? static_cast<int16_t>(FREENOVE_LCD_HEIGHT)
+                                                : static_cast<int16_t>(FREENOVE_LCD_WIDTH);
+}
+
+int16_t activeDisplayHeight() {
+  return ((FREENOVE_LCD_ROTATION & 0x1U) != 0U) ? static_cast<int16_t>(FREENOVE_LCD_WIDTH)
+                                                : static_cast<int16_t>(FREENOVE_LCD_HEIGHT);
+}
+
+bool ensureSafeDiagnosticDisplayReady() {
+  if (g_safe_diag_display_ready) {
+    return true;
+  }
+
+  drivers::display::DisplayHalConfig display_cfg = {};
+  display_cfg.width = FREENOVE_LCD_WIDTH;
+  display_cfg.height = FREENOVE_LCD_HEIGHT;
+  display_cfg.rotation = FREENOVE_LCD_ROTATION;
+  if (!drivers::display::displayHal().begin(display_cfg)) {
+    Serial.println("[SAFE] display init failed");
+    return false;
+  }
+  g_safe_diag_display_ready = true;
+  return true;
+}
+
+void drawSafeDiagnosticText(int16_t y,
+                            const char* text,
+                            drivers::display::OverlayFontFace font_face,
+                            uint16_t color565,
+                            bool opaque_bg = false) {
+  if (text == nullptr || text[0] == '\0' || !g_safe_diag_display_ready) {
+    return;
+  }
+  drivers::display::OverlayTextCommand command = {};
+  command.text = text;
+  command.x = 10;
+  command.y = y;
+  command.color565 = color565;
+  command.bg565 = 0x0000U;
+  command.font_face = font_face;
+  command.size = 1U;
+  command.opaque_bg = opaque_bg;
+  (void)drivers::display::displayHal().drawOverlayText(command);
+}
+
+void renderSafeDiagnosticScreen() {
+  if (!ensureSafeDiagnosticDisplayReady()) {
+    return;
+  }
+
+  drivers::display::DisplayHal& display = drivers::display::displayHal();
+  const int16_t width = activeDisplayWidth();
+  const int16_t height = activeDisplayHeight();
+  const uint16_t bg = display.color565(0x06U, 0x0BU, 0x14U);
+  const uint16_t header_bg = display.color565(0x52U, 0x12U, 0x12U);
+  const uint16_t accent = display.color565(0xFFU, 0xD6U, 0x4AU);
+  const uint16_t fg = display.color565(0xE8U, 0xF1U, 0xFFU);
+  const uint16_t dim = display.color565(0x98U, 0xA6U, 0xBAU);
+
+  const BootHeapSnapshot heap = bootCaptureHeapSnapshot();
+  display.fillScreen(bg);
+  (void)display.fillOverlayRect(0, 0, width, 44, header_bg);
+  drawSafeDiagnosticText(10, "PSRAM REQUIRED", drivers::display::OverlayFontFace::kBuiltinLarge, accent);
+
+  char line[96] = {0};
+  std::snprintf(line, sizeof(line), "Board: FNK0102H / Freenove ESP32-S3 WROOM N8R8");
+  drawSafeDiagnosticText(58, line, drivers::display::OverlayFontFace::kBuiltinMedium, fg);
+  std::snprintf(line,
+                sizeof(line),
+                "PSRAM found=%u total=%lu free=%lu",
+                heap.psram_found ? 1U : 0U,
+                static_cast<unsigned long>(heap.psram_total),
+                static_cast<unsigned long>(heap.heap_psram_free));
+  drawSafeDiagnosticText(84, line, drivers::display::OverlayFontFace::kBuiltinMedium, fg);
+  std::snprintf(line,
+                sizeof(line),
+                "Heap free=%u largest_internal=%lu",
+                static_cast<unsigned int>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(heap.heap_internal_largest));
+  drawSafeDiagnosticText(106, line, drivers::display::OverlayFontFace::kBuiltinSmall, fg);
+
+  drawSafeDiagnosticText(142, "Safe diagnostic mode active", drivers::display::OverlayFontFace::kBuiltinMedium, accent);
+  drawSafeDiagnosticText(166, "Disabled: UI apps, camera, FX, audio, mic", drivers::display::OverlayFontFace::kBuiltinSmall, fg);
+  drawSafeDiagnosticText(186, "Disabled: Wi-Fi, ESP-NOW, web, file share", drivers::display::OverlayFontFace::kBuiltinSmall, fg);
+  drawSafeDiagnosticText(218, "Buttons remain active on GPIO19 ladder", drivers::display::OverlayFontFace::kBuiltinSmall, fg);
+
+  if (g_safe_diag_last_button != 0U) {
+    std::snprintf(line,
+                  sizeof(line),
+                  "Last button: key=%u long=%u at=%lu ms",
+                  static_cast<unsigned int>(g_safe_diag_last_button),
+                  g_safe_diag_last_button_long ? 1U : 0U,
+                  static_cast<unsigned long>(g_safe_diag_last_button_ms));
+  } else {
+    std::snprintf(line, sizeof(line), "Last button: none");
+  }
+  drawSafeDiagnosticText(252, line, drivers::display::OverlayFontFace::kBuiltinMedium, fg);
+
+  drawSafeDiagnosticText(298, "Serial: PING HELP STATUS BTN_READ LCD_BACKLIGHT", drivers::display::OverlayFontFace::kBuiltinSmall, fg);
+  drawSafeDiagnosticText(320, "Cause: build expects OPI PSRAM but boot sees none", drivers::display::OverlayFontFace::kBuiltinSmall, dim);
+  drawSafeDiagnosticText(342, "Action: verify module, flash/psram mode, board wiring", drivers::display::OverlayFontFace::kBuiltinSmall, dim);
+  drawSafeDiagnosticText(height - 24, "Reboot after fixing PSRAM detection.", drivers::display::OverlayFontFace::kBuiltinSmall, accent);
+  g_safe_diag_last_redraw_ms = millis();
+}
+
+void beginSafeDiagnosticMode() {
+  Serial.println("[SAFE] boot path: storage + serial + display + buttons only");
+  g_buttons.begin();
+  applyLcdBacklight(g_lcd_backlight_level);
+  renderSafeDiagnosticScreen();
+  Serial.println("[SAFE] serial commands: PING HELP STATUS BTN_READ LCD_BACKLIGHT");
+}
+
+void printSafeDiagnosticStatus() {
+  const BootHeapSnapshot heap = bootCaptureHeapSnapshot();
+  Serial.printf("STATUS mode=safe_diagnostic psram_found=%u psram_total=%lu psram_free=%lu heap_free=%u internal_largest=%lu "
+                "ui=0 audio=0 cam=0 hw=0 net=0 web=0 share=0 key=%u mv=%d display=%u\n",
+                heap.psram_found ? 1U : 0U,
+                static_cast<unsigned long>(heap.psram_total),
+                static_cast<unsigned long>(heap.heap_psram_free),
+                static_cast<unsigned int>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(heap.heap_internal_largest),
+                static_cast<unsigned int>(g_buttons.currentKey()),
+                g_buttons.lastAnalogMilliVolts(),
+                g_safe_diag_display_ready ? 1U : 0U);
+}
+
+void runSafeDiagnosticIteration(uint32_t now_ms) {
+  ButtonEvent event;
+  bool redraw = false;
+  while (g_buttons.pollEvent(&event)) {
+    const uint32_t event_ms = (event.ms != 0U) ? event.ms : now_ms;
+    g_safe_diag_last_button = event.key;
+    g_safe_diag_last_button_long = event.long_press;
+    g_safe_diag_last_button_ms = event_ms;
+    Serial.printf("[SAFE] button key=%u long=%u mv=%d ms=%lu\n",
+                  static_cast<unsigned int>(event.key),
+                  event.long_press ? 1U : 0U,
+                  g_buttons.lastAnalogMilliVolts(),
+                  static_cast<unsigned long>(event_ms));
+    redraw = true;
+  }
+
+  if (redraw || g_safe_diag_last_redraw_ms == 0U || static_cast<int32_t>(now_ms - g_safe_diag_last_redraw_ms) >= 5000) {
+    renderSafeDiagnosticScreen();
+  }
+  yield();
 }
 
 bool parseBoolToken(const char* text, bool* out_value) {
@@ -3216,8 +3461,14 @@ void setCameraSceneActive(bool active) {
       return;
     }
     if (!g_camera.startRecorderSession()) {
-      Serial.println("[CAM_UI] recorder session start failed");
-      g_camera_player.show();
+      const bool legacy_ok = g_camera.start();
+      Serial.printf("[CAM_UI] recorder session start failed, legacy=%u\n", legacy_ok ? 1U : 0U);
+      g_camera_scene_active = false;
+      if (legacy_ok) {
+        g_camera_player.hide();
+      } else {
+        g_camera_player.show();
+      }
       return;
     }
     g_camera_player.show();
@@ -3352,6 +3603,10 @@ void printButtonRead() {
 }
 
 void printRuntimeStatus() {
+  if (g_safe_diagnostic_mode) {
+    printSafeDiagnosticStatus();
+    return;
+  }
   const ScenarioSnapshot snapshot = g_scenario.snapshot();
   const NetworkManager::Snapshot net = g_network.snapshot();
   const HardwareManager::Snapshot& hw = g_hardware.snapshotRef();
@@ -4832,7 +5087,7 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
   }
 
   if (std::strcmp(action_id, "ACTION_MEDIA_PLAY_FILE") == 0) {
-    const char* media_file = g_story_action_doc["config"]["file"] | g_story_action_doc["config"]["path"] | "/music/boot_radio.mp3";
+    const char* media_file = g_story_action_doc["config"]["file"] | g_story_action_doc["config"]["path"] | "/apps/audio_player/audio/default.mp3";
     return g_media.play(media_file, &g_audio);
   }
 
@@ -7040,6 +7295,38 @@ void handleSerialCommandImpl(const char* command_line, uint32_t now_ms) {
     Serial.println("PONG");
     return;
   }
+  if (g_safe_diagnostic_mode) {
+    if (std::strcmp(command, "HELP") == 0) {
+      Serial.println("CMDS PING HELP STATUS BTN_READ LCD_BACKLIGHT [0..255]");
+      return;
+    }
+    if (std::strcmp(command, "STATUS") == 0) {
+      printSafeDiagnosticStatus();
+      return;
+    }
+    if (std::strcmp(command, "BTN_READ") == 0) {
+      printButtonRead();
+      return;
+    }
+    if (std::strcmp(command, "LCD_BACKLIGHT") == 0) {
+      if (argument == nullptr || argument[0] == '\0') {
+        Serial.printf("LCD_BACKLIGHT %u\n", static_cast<unsigned int>(g_lcd_backlight_level));
+        return;
+      }
+      char* end = nullptr;
+      const long parsed = std::strtol(argument, &end, 10);
+      if (end == argument || (end != nullptr && *end != '\0') || parsed < 0L || parsed > 255L) {
+        Serial.println("ERR LCD_BACKLIGHT_ARG");
+        return;
+      }
+      applyLcdBacklight(static_cast<uint8_t>(parsed));
+      renderSafeDiagnosticScreen();
+      Serial.printf("ACK LCD_BACKLIGHT %lu\n", static_cast<unsigned long>(parsed));
+      return;
+    }
+    Serial.printf("ERR SAFE_DIAGNOSTIC_MODE cmd=%s\n", command);
+    return;
+  }
   if (std::strcmp(command, "HELP") == 0) {
     Serial.println(
         "CMDS PING STATUS BTN_READ NEXT UNLOCK RESET "
@@ -7858,8 +8145,19 @@ void handleSerialCommandImpl(const char* command_line, uint32_t now_ms) {
 }
 
 void pollSerialCommands(uint32_t now_ms) {
-  while (Serial.available() > 0) {
-    const int raw = Serial.read();
+  for (;;) {
+    int raw = -1;
+#if ZACUS_HAS_USB_HWCDC
+    if (g_usb_console_ready && USBSerial.available() > 0) {
+      raw = USBSerial.read();
+    }
+#endif
+    if (raw < 0 && Serial.available() > 0) {
+      raw = Serial.read();
+    }
+    if (raw < 0) {
+      break;
+    }
     if (raw < 0) {
       break;
     }
@@ -7869,7 +8167,7 @@ void pollSerialCommands(uint32_t now_ms) {
         continue;
       }
       g_serial_line[g_serial_line_len] = '\0';
-      g_app_coordinator.onSerialLine(g_serial_line, now_ms);
+      handleSerialCommandImpl(g_serial_line, now_ms);
       g_serial_line_len = 0U;
       continue;
     }
@@ -7886,9 +8184,19 @@ void pollSerialCommands(uint32_t now_ms) {
 
 void setup() {
   Serial.begin(115200);
+#if ZACUS_HAS_USB_HWCDC
+  USBSerial.setRxBufferSize(kUsbConsoleRxBufferSize);
+  USBSerial.begin(115200);
+  g_usb_console_ready = true;
+#endif
   delay(100);
   RuntimeMetrics::instance().reset(bootResetReasonCode());
   Serial.println("[MAIN] Freenove all-in-one boot");
+#if ZACUS_HAS_USB_HWCDC
+  Serial.printf("[USB] HWCDC bridge ready=%u rx_buf=%u\n",
+                g_usb_console_ready ? 1U : 0U,
+                static_cast<unsigned int>(kUsbConsoleRxBufferSize));
+#endif
   bootPrintReport(kFirmwareName, ZACUS_FW_VERSION);
   logBuildMemoryPolicy();
   logBootMemoryProfile();
@@ -7934,9 +8242,13 @@ void setup() {
     Serial.printf("[DIAG] sprint_mode=1 telemetry_ms=%lu espnow_boot=0 discovery_runtime=0\n",
                   static_cast<unsigned long>(g_hardware_cfg.telemetry_period_ms));
   }
+  applySafeDiagnosticBootPolicy();
+  if (g_safe_diagnostic_mode) {
+    beginSafeDiagnosticMode();
+    return;
+  }
   loadBootProvisioningState();
   loadEspNowDeviceNameFromNvs();
-  g_file_share_service.begin(g_network_cfg.hostname, g_espnow_device_name);
   {
     // Force bootmode to skip story scenario routing when AmigaUI Shell mode is active
     if (g_amiga_shell_mode_boot) {
@@ -7967,7 +8279,7 @@ void setup() {
                 g_web_auth_required ? 1U : 0U,
                 g_web_auth_token[0] != '\0' ? 1U : 0U);
 
-  // Initialize audio before camera/network stacks to keep DMA heap pressure low during I2S bring-up.
+  // Initialize audio before camera/UI stacks to keep DMA heap pressure low during I2S bring-up.
   g_audio.begin();
   Serial.printf("[MAIN] audio profile=%u:%s count=%u\n",
                 g_audio.outputProfile(),
@@ -7990,6 +8302,10 @@ void setup() {
     }
   }
   if (g_hardware_cfg.enabled_on_boot) {
+    if (!g_hardware_cfg.mic_enabled) {
+      g_hardware.setMicRuntimeEnabled(false);
+      Serial.println("[HW] mic boot disabled by runtime policy");
+    }
     g_hardware_started = g_hardware.begin();
     g_next_hw_telemetry_ms = millis() + g_hardware_cfg.telemetry_period_ms;
     g_mic_event_armed = true;
@@ -8002,48 +8318,6 @@ void setup() {
 
   g_buttons.begin();
   g_touch.begin();
-  g_network.begin(g_network_cfg.hostname);
-  if (kBootEspNowOnlyMode) {
-    g_network.configureFallbackAp("", "");
-    g_network.configureLocalPolicy("", "", false, g_network_cfg.local_retry_ms, false);
-    Serial.println("[NET] wifi+web disabled (espnow_only_mode=1)");
-  } else {
-    g_network.configureFallbackAp(g_network_cfg.ap_default_ssid, g_network_cfg.ap_default_password);
-    g_network.configureLocalPolicy(g_network_cfg.local_ssid,
-                                   g_network_cfg.local_password,
-                                   g_network_cfg.force_ap_if_not_local,
-                                   g_network_cfg.local_retry_ms,
-                                   g_network_cfg.pause_local_retry_when_ap_client);
-    if ((g_setup_mode || kSprintDiagMode) && g_network_cfg.ap_default_ssid[0] != '\0') {
-      g_network.startAp(g_network_cfg.ap_default_ssid, g_network_cfg.ap_default_password);
-    }
-    if (g_network_cfg.local_ssid[0] != '\0') {
-      const bool connect_started = g_network.connectSta(g_network_cfg.local_ssid, g_network_cfg.local_password);
-      Serial.printf("[NET] boot wifi target=%s started=%u\n",
-                    g_network_cfg.local_ssid,
-                    connect_started ? 1U : 0U);
-    }
-  }
-  if (g_network_cfg.espnow_enabled_on_boot) {
-    if (g_network.enableEspNow()) {
-      for (uint8_t index = 0U; index < g_network_cfg.espnow_boot_peer_count; ++index) {
-        const char* peer = g_network_cfg.espnow_boot_peers[index];
-        if (peer == nullptr || peer[0] == '\0') {
-          continue;
-        }
-        const bool ok = g_network.addEspNowPeer(peer);
-        Serial.printf("[NET] boot peer add mac=%s ok=%u\n", peer, ok ? 1U : 0U);
-      }
-    }
-  } else {
-    Serial.println("[NET] ESP-NOW boot disabled by APP_ESPNOW config");
-  }
-  g_next_espnow_discovery_ms = millis() + 2000U;
-  if (!kBootEspNowOnlyMode) {
-    setupWebUi();
-  } else {
-    Serial.println("[WEB] disabled (espnow_only_mode=1)");
-  }
   // Scenario loading disabled to boot directly to Amiga UI Shell grid launcher
   // if (!g_scenario.begin(kDefaultScenarioFile)) {
   //   Serial.println("[MAIN] scenario init failed");
@@ -8061,23 +8335,27 @@ void setup() {
   // }
   g_last_action_step_key[0] = '\0';
 
-  g_ui.begin();
-  
-  // Initialize Amiga UI Shell for grid-based app launcher
-  g_amiga_shell.init(&g_hardware, &g_ui, &g_app_registry);
-  g_amiga_shell.onStart();
-  
+  g_ui_started = g_ui.begin();
+  if (!g_ui_started) {
+    Serial.println("[BOOT] UI init failed: network/web boot blocked");
+  } else {
+    g_amiga_shell.init(&g_hardware, &g_ui, &g_app_registry);
+    g_amiga_shell.onStart();
+  }
+
   applyLcdBacklight(g_lcd_backlight_level);
-  g_ui.setHardwareController(&g_hardware);
-  UiLaMetrics boot_la_metrics = {};
-  boot_la_metrics.locked = false;
-  boot_la_metrics.stability_pct = 0U;
-  boot_la_metrics.stable_ms = 0U;
-  boot_la_metrics.stable_target_ms = g_hardware_cfg.mic_la_stable_ms;
-  boot_la_metrics.gate_elapsed_ms = 0U;
-  boot_la_metrics.gate_timeout_ms = g_hardware_cfg.mic_la_timeout_ms;
-  g_ui.setLaMetrics(boot_la_metrics);
-  g_ui.setHardwareSnapshotRef(&g_hardware.snapshotRef());
+  if (g_ui_started) {
+    g_ui.setHardwareController(&g_hardware);
+    UiLaMetrics boot_la_metrics = {};
+    boot_la_metrics.locked = false;
+    boot_la_metrics.stability_pct = 0U;
+    boot_la_metrics.stable_ms = 0U;
+    boot_la_metrics.stable_target_ms = g_hardware_cfg.mic_la_stable_ms;
+    boot_la_metrics.gate_elapsed_ms = 0U;
+    boot_la_metrics.gate_timeout_ms = g_hardware_cfg.mic_la_timeout_ms;
+    g_ui.setLaMetrics(boot_la_metrics);
+    g_ui.setHardwareSnapshotRef(&g_hardware.snapshotRef());
+  }
 #if defined(USE_AUDIO) && (USE_AUDIO != 0)
   g_amp_ready = false;
   g_amp_scene_active = false;
@@ -8085,7 +8363,76 @@ void setup() {
   Serial.println("[AMP] lazy init (on SCENE_MP3_PLAYER)");
 #endif
   g_camera_scene_active = false;
-  g_camera_scene_ready = ensureCameraUiInitialized();
+  if (!g_ui_started) {
+    g_camera_scene_ready = false;
+    Serial.println("[CAM_UI] preload skipped (ui_started=0)");
+  } else {
+    g_camera_scene_ready = ensureCameraUiInitialized();
+  }
+
+  if (!g_ui_started) {
+    Serial.println("[NET] boot skipped (ui_started=0)");
+    Serial.println("[WEB] boot skipped (ui_started=0)");
+    Serial.println("[SHARE] boot skipped (ui_started=0)");
+  } else {
+    const BootHeapSnapshot post_ui_heap = bootCaptureHeapSnapshot();
+    const uint32_t post_ui_free_heap = ESP.getFreeHeap();
+    g_boot_network_deferred = shouldDeferBootNetworkBringup(post_ui_heap, post_ui_free_heap);
+    if (g_boot_network_deferred) {
+      g_network_cfg.espnow_enabled_on_boot = false;
+      g_espnow_discovery_runtime_enabled = false;
+      Serial.printf("[NET] boot deferred reason=%s free_heap=%u largest_internal=%lu\n",
+                    bootNetworkDeferReason(post_ui_heap, post_ui_free_heap),
+                    static_cast<unsigned int>(post_ui_free_heap),
+                    static_cast<unsigned long>(post_ui_heap.heap_internal_largest));
+      Serial.println("[WEB] boot deferred (network_boot_deferred=1)");
+      Serial.println("[SHARE] boot skipped (network_boot_deferred=1)");
+    } else {
+      g_file_share_service.begin(g_network_cfg.hostname, g_espnow_device_name);
+      g_network.begin(g_network_cfg.hostname);
+      if (kBootEspNowOnlyMode) {
+        g_network.configureFallbackAp("", "");
+        g_network.configureLocalPolicy("", "", false, g_network_cfg.local_retry_ms, false);
+        Serial.println("[NET] wifi+web disabled (espnow_only_mode=1)");
+      } else {
+        g_network.configureFallbackAp(g_network_cfg.ap_default_ssid, g_network_cfg.ap_default_password);
+        g_network.configureLocalPolicy(g_network_cfg.local_ssid,
+                                       g_network_cfg.local_password,
+                                       g_network_cfg.force_ap_if_not_local,
+                                       g_network_cfg.local_retry_ms,
+                                       g_network_cfg.pause_local_retry_when_ap_client);
+        if ((g_setup_mode || kSprintDiagMode) && g_network_cfg.ap_default_ssid[0] != '\0') {
+          g_network.startAp(g_network_cfg.ap_default_ssid, g_network_cfg.ap_default_password);
+        }
+        if (g_network_cfg.local_ssid[0] != '\0') {
+          const bool connect_started = g_network.connectSta(g_network_cfg.local_ssid, g_network_cfg.local_password);
+          Serial.printf("[NET] boot wifi target=%s started=%u\n",
+                        g_network_cfg.local_ssid,
+                        connect_started ? 1U : 0U);
+        }
+      }
+      if (g_network_cfg.espnow_enabled_on_boot) {
+        if (g_network.enableEspNow()) {
+          for (uint8_t index = 0U; index < g_network_cfg.espnow_boot_peer_count; ++index) {
+            const char* peer = g_network_cfg.espnow_boot_peers[index];
+            if (peer == nullptr || peer[0] == '\0') {
+              continue;
+            }
+            const bool ok = g_network.addEspNowPeer(peer);
+            Serial.printf("[NET] boot peer add mac=%s ok=%u\n", peer, ok ? 1U : 0U);
+          }
+        }
+      } else {
+        Serial.println("[NET] ESP-NOW boot disabled by APP_ESPNOW config");
+      }
+      if (!kBootEspNowOnlyMode) {
+        setupWebUi();
+      } else {
+        Serial.println("[WEB] disabled (espnow_only_mode=1)");
+      }
+    }
+  }
+  g_next_espnow_discovery_ms = millis() + 2000U;
   // Boot directly to Amiga UI Shell (skip default scenario rendering)
   // refreshSceneIfNeeded(true);
   // startPendingAudioIfAny();
@@ -8121,7 +8468,9 @@ void setup() {
   g_amiga_shell.setRuntimeBridge(&kAmigaAppRuntimeBridge);
   g_amiga_shell.setTouchEmulationMode(true);
 
-  if (g_amiga_shell_mode_boot) {
+  if (!g_ui_started) {
+    Serial.println("[BOOT] skip app_coordinator.begin (ui_started=0)");
+  } else if (g_amiga_shell_mode_boot) {
     Serial.println("[BOOT] skip app_coordinator.begin (amiga_shell_mode=1)");
   } else {
     g_app_coordinator.begin(&g_runtime_services);
@@ -8129,6 +8478,16 @@ void setup() {
 }
 
 void runRuntimeIteration(uint32_t now_ms) {
+  if (!g_ui_started) {
+    ButtonEvent event;
+    while (g_buttons.pollEvent(&event)) {
+      Serial.printf("[BOOT] ui_unavailable button=%u long=%u\n",
+                    static_cast<unsigned int>(event.key),
+                    event.long_press ? 1U : 0U);
+    }
+    yield();
+    return;
+  }
   ButtonEvent event;
   while (g_buttons.pollEvent(&event)) {
     const uint32_t event_ms = (event.ms != 0U) ? event.ms : now_ms;
@@ -8142,6 +8501,9 @@ void runRuntimeIteration(uint32_t now_ms) {
     ui_event.key = event.key;
     ui_event.long_press = event.long_press;
     g_ui.submitInputEvent(ui_event);
+    if (g_amiga_shell_mode_boot) {
+      g_amiga_shell.handleButtonInput(event.key);
+    }
     if (g_camera_scene_active) {
       (void)dispatchCameraSceneButton(event.key, event.long_press);
     }
@@ -8167,6 +8529,9 @@ void runRuntimeIteration(uint32_t now_ms) {
     ui_event.touch_y = touch.y;
     ui_event.touch_pressed = touch.touched;
     g_ui.submitInputEvent(ui_event);
+    if (g_amiga_shell_mode_boot && touch.touched) {
+      g_amiga_shell.handleTouchInput(touch.x, touch.y);
+    }
   } else {
     UiInputEvent ui_event = {};
     ui_event.type = UiInputEventType::kTouch;
@@ -8174,6 +8539,9 @@ void runRuntimeIteration(uint32_t now_ms) {
     ui_event.touch_y = 0;
     ui_event.touch_pressed = false;
     g_ui.submitInputEvent(ui_event);
+  }
+  if (g_amiga_shell_mode_boot) {
+    g_amiga_shell.onTick(16U);
   }
 
   const uint32_t network_started_us = perfMonitor().beginSample();
@@ -8355,23 +8723,24 @@ void runRuntimeIteration(uint32_t now_ms) {
 void loop() {
   const uint32_t now_ms = millis();
   pollSerialCommands(now_ms);
-  
-  // Route to AmigaUI Shell or traditional app coordinator based on boot mode
-  if (g_amiga_shell_mode_boot) {
+
+  if (g_safe_diagnostic_mode) {
+    runSafeDiagnosticIteration(now_ms);
+    return;
+  }
+  if (!g_ui_started) {
     ButtonEvent event;
     while (g_buttons.pollEvent(&event)) {
-      g_amiga_shell.handleButtonInput(event.key);
+      Serial.printf("[BOOT] ui_unavailable button=%u long=%u\n",
+                    static_cast<unsigned int>(event.key),
+                    event.long_press ? 1U : 0U);
     }
-
-    TouchPoint touch;
-    if (g_touch.poll(&touch) && touch.touched) {
-      g_amiga_shell.handleTouchInput(touch.x, touch.y);
-    }
-
-    // AmigaUI Shell mode: draw grid launcher with app icons
-    g_amiga_shell.onTick(16);  // ~60 FPS tick (16ms)
-    lv_task_handler();         // Process LVGL rendering (critical for display update!)
     yield();
+    return;
+  }
+
+  if (g_amiga_shell_mode_boot) {
+    runRuntimeIteration(now_ms);
   } else {
     // Traditional scenario/story mode
     g_app_coordinator.tick(now_ms);
