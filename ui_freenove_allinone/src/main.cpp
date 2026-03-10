@@ -26,6 +26,7 @@
 #include "storage_manager.h"
 #include "touch_manager.h"
 #include "ui_manager.h"
+#include "ui/ui_amiga_shell.h"
 
 namespace {
 
@@ -3699,6 +3700,11 @@ void setup() {
   g_last_action_step_key[0] = '\0';
 
   g_ui.begin();
+  
+  // Initialize Amiga UI Shell for grid-based app launcher
+  g_amiga_shell.init(&g_hardware, &g_ui);
+  g_amiga_shell.onStart();
+  
   g_ui.setLaDetectionState(false, 0U, 0U, g_hardware_cfg.mic_la_stable_ms, 0U, g_hardware_cfg.mic_la_timeout_ms);
   g_ui.setHardwareSnapshotRef(&g_hardware.snapshotRef());
   refreshSceneIfNeeded(true);
@@ -3842,6 +3848,10 @@ void loop() {
                            la_gate_elapsed_ms,
                            g_hardware_cfg.mic_la_timeout_ms);
   refreshSceneIfNeeded(false);
+  
+  // Update Amiga UI Shell animations
+  g_amiga_shell.onTick(5);  // 5ms per frame
+  
   g_ui.update();
   if (g_web_started) {
     g_web_server.handleClient();

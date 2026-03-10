@@ -1,0 +1,48 @@
+{
+  "name": "Amiga Demoscene Retro",
+  "version": "1.0.0",
+  "description": "Nostalgic 1990s Amiga aesthetic with vibrant neon colors - perfect for children's apps",
+  "primary_colors": {
+    "cyan": "#00FFFF",
+    "magenta": "#FF00FF",
+    "yellow": "#FFFF00",
+    "white": "#FFFFFF"
+  },
+  "secondary_colors": {
+    "bright_blue": "#0088FF",
+    "bright_green": "#00FF88",
+    "dark_background": "#000000",
+    "shadow": "#444444"
+  },
+  "ui_theme": {
+    "background_color": "#000000",
+    "button_background": "#FF00FF",
+    "button_text_color": "#FFFFFF",
+    "active_background": "#00FFFF",
+    "active_text_color": "#000000",
+    "disabled_background": "#444444",
+    "disabled_text_color": "#888888",
+    "border_color": "#00FFFF",
+    "border_width": 2
+  },
+  "typography": {
+    "primary_font": "ComicNeue-Regular.ttf",
+    "fallback_font": "Arial",
+    "heading_size": 32,
+    "body_size": 18,
+    "button_size": 20
+  },
+  "animations": {
+    "transition_duration_ms": 300,
+    "fade_effect": true,
+    "slide_direction": "left_to_right",
+    "pulse_enabled": true,
+    "pulse_frequency_ms": 500
+  },
+  "grid_layout": {
+    "icon_size_px": 64,
+    "icon_spacing_px": 16,
+    "columns": 4,
+    "rows": 4
+  }
+}

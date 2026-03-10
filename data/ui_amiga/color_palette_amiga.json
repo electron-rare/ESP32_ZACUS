@@ -1,0 +1,22 @@
+{
+  "name": "Amiga Demoscene Retro",
+  "description": "Nostalgic 1990s Amiga aesthetic with neon colors",
+  "colors": {
+    "background": "#000000",
+    "primary_cyan": "#00FFFF",
+    "primary_magenta": "#FF00FF",
+    "accent_yellow": "#FFFF00",
+    "accent_white": "#FFFFFF",
+    "accent_blue": "#0088FF",
+    "accent_green": "#00FF88",
+    "shadow": "#444444"
+  },
+  "ui": {
+    "button_bg": "#FF00FF",
+    "button_text": "#FFFFFF",
+    "active_bg": "#00FFFF",
+    "active_text": "#000000",
+    "disabled_bg": "#444444",
+    "disabled_text": "#888888"
+  }
+}

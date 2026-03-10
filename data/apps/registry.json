@@ -1,0 +1,56 @@
+{
+  "apps": [
+    {
+      "id": "audio_player",
+      "title": "Audio Player",
+      "category": "media",
+      "enabled": true,
+      "version": "1.0.0",
+      "entry_screen": "AUDIO_PLAYER_MAIN",
+      "icon_path": "/apps/audio_player/icon.png",
+      "required_capabilities": "CAP_AUDIO_OUT,CAP_STORAGE_FS",
+      "optional_capabilities": "CAP_WIFI",
+      "supports_offline": true,
+      "supports_streaming": false
+    },
+    {
+      "id": "calculator",
+      "title": "Calculator",
+      "category": "utilities",
+      "enabled": true,
+      "version": "1.0.0",
+      "entry_screen": "CALC_MAIN",
+      "icon_path": "/apps/calculator/icon.png",
+      "required_capabilities": "CAP_GPU_UI",
+      "optional_capabilities": "",
+      "supports_offline": true,
+      "supports_streaming": false
+    },
+    {
+      "id": "timer_tools",
+      "title": "Timer & Chrono",
+      "category": "utilities",
+      "enabled": true,
+      "version": "1.0.0",
+      "entry_screen": "TIMER_MAIN",
+      "icon_path": "/apps/timer_tools/icon.png",
+      "required_capabilities": "CAP_GPU_UI,CAP_LED",
+      "optional_capabilities": "",
+      "supports_offline": true,
+      "supports_streaming": false
+    },
+    {
+      "id": "flashlight",
+      "title": "Flashlight",
+      "category": "utilities",
+      "enabled": true,
+      "version": "1.0.0",
+      "entry_screen": "LED_MAIN",
+      "icon_path": "/apps/flashlight/icon.png",
+      "required_capabilities": "CAP_LED",
+      "optional_capabilities": "",
+      "supports_offline": true,
+      "supports_streaming": false
+    }
+  ]
+}

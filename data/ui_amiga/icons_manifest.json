@@ -1,0 +1,74 @@
+{
+  "icons": [
+    {
+      "id": "audio_player",
+      "name": "Audio Player",
+      "category": "media",
+      "filename": "audio_player.png",
+      "size": 256,
+      "color_primary": "#00FFFF",
+      "color_accent": "#FF00FF",
+      "emoji_fallback": "🎵"
+    },
+    {
+      "id": "calculator",
+      "name": "Calculator",
+      "category": "utilities",
+      "filename": "calculator.png",
+      "size": 256,
+      "color_primary": "#FFFF00",
+      "color_accent": "#00FFFF",
+      "emoji_fallback": "🧮"
+    },
+    {
+      "id": "timer",
+      "name": "Timer",
+      "category": "utilities",
+      "filename": "timer.png",
+      "size": 256,
+      "color_primary": "#FF00FF",
+      "color_accent": "#00FF88",
+      "emoji_fallback": "⏰"
+    },
+    {
+      "id": "flashlight",
+      "name": "Flashlight",
+      "category": "utilities",
+      "filename": "flashlight.png",
+      "size": 256,
+      "color_primary": "#FFFF00",
+      "color_accent": "#FFFFFF",
+      "emoji_fallback": "🔦"
+    },
+    {
+      "id": "camera",
+      "name": "Camera",
+      "category": "media",
+      "filename": "camera.png",
+      "size": 256,
+      "color_primary": "#0088FF",
+      "color_accent": "#FF00FF",
+      "emoji_fallback": "📷"
+    },
+    {
+      "id": "dictaphone",
+      "name": "Dictaphone",
+      "category": "media",
+      "filename": "dictaphone.png",
+      "size": 256,
+      "color_primary": "#00FF88",
+      "color_accent": "#00FFFF",
+      "emoji_fallback": "🎤"
+    },
+    {
+      "id": "qr_scanner",
+      "name": "QR Scanner",
+      "category": "utilities",
+      "filename": "qr_scanner.png",
+      "size": 256,
+      "color_primary": "#FFFF00",
+      "color_accent": "#FF00FF",
+      "emoji_fallback": "📱"
+    }
+  ]
+}
