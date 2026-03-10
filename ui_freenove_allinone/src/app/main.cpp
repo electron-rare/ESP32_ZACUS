@@ -207,6 +207,7 @@ bool g_la_dispatch_in_progress = false;
 bool g_has_ring_sent_for_win_etape = false;
 bool g_win_etape_ui_refresh_pending = false;
 bool g_boot_media_manager_mode = false;
+bool g_amiga_shell_mode_boot = true;  // Force boot to Amiga UI Shell instead of story scenario
 uint8_t g_lcd_backlight_level = 80U;
 uint8_t g_lcd_backlight_base_level = 80U;
 bool g_setup_mode = true;
@@ -7894,15 +7895,21 @@ void setup() {
   loadEspNowDeviceNameFromNvs();
   g_file_share_service.begin(g_network_cfg.hostname, g_espnow_device_name);
   {
-    BootModeStore::StartupMode startup_mode = BootModeStore::StartupMode::kStory;
-    if (g_boot_mode_store.loadMode(&startup_mode)) {
-      applyStartupMode(startup_mode);
+    // Force bootmode to skip story scenario routing when AmigaUI Shell mode is active
+    if (g_amiga_shell_mode_boot) {
+      Serial.println("[BOOT] AmigaUI Shell mode ENABLED - skipping story scenario boot");
+      // Do NOT call applyStartupMode to avoid story scenario initialization
     } else {
-      applyStartupMode(BootModeStore::StartupMode::kStory);
+      BootModeStore::StartupMode startup_mode = BootModeStore::StartupMode::kStory;
+      if (g_boot_mode_store.loadMode(&startup_mode)) {
+        applyStartupMode(startup_mode);
+      } else {
+        applyStartupMode(BootModeStore::StartupMode::kStory);
+      }
+      Serial.printf("[BOOT] startup_mode=%s media_validated=%u\n",
+                    BootModeStore::modeLabel(currentStartupMode()),
+                    g_boot_mode_store.isMediaValidated() ? 1U : 0U);
     }
-    Serial.printf("[BOOT] startup_mode=%s media_validated=%u\n",
-                  BootModeStore::modeLabel(currentStartupMode()),
-                  g_boot_mode_store.isMediaValidated() ? 1U : 0U);
   }
   g_resource_coordinator.begin();
   const bool app_registry_loaded = g_app_registry.loadFromFs(g_storage);
