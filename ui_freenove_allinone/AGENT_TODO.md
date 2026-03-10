@@ -1,5 +1,26 @@
 ## Validation hardware – TODO détaillée
 
+## Pilotage Apps/Workbench (audit 2026-03-02)
+
+Reference audit complete:
+- `specs/apps/IMPLEMENTATION_AUDIT_TODO.md`
+
+Priorites immediates (avant enchainement Sprint 3):
+- [ ] **P0** Aligner le provisioning registry sur 20 apps activees (seed/fallback + migration si `/apps/registry.json` deja present).
+- [ ] **P0** Corriger launcher Workbench pour 20 apps (pagination + hit-test tactile + emulation tactile page-aware).
+- [ ] **P0** Supprimer les `delay()` bloquants dans `AmigaUIShell` (transition/tap feedback non bloquants).
+- [ ] **P0** Repasser gate endurance utility: `python3 tests/sprint1_utility_contract.py --mode serial --cycles 20 --port <PORT>`.
+- [ ] **P1** Repasser gate endurance capture: `python3 tests/sprint2_capture_contract.py --mode serial --cycles 20 --port <PORT>`.
+- [ ] **P1** Ajouter harness Sprint 3 audio (`tests/sprint3_audio_contract.py`) puis gate serial + HTTP.
+- [ ] **P1** Fermer gap QR decode reel camera -> payload (au-dela du `scan_payload` injecte).
+- [ ] **P1** Decider GO/NO-GO core NES externe avec KPI et traces.
+
+Gates de deblocage "foundation complete":
+1. `pio run -e freenove_esp32s3_full_with_ui` vert.
+2. 20 apps visibles et ouvrables dans launcher (boutons + touch/emulation).
+3. Sprint1 20 cycles vert.
+4. Sprint2 20 cycles vert.
+
 ## Sprint 0 - Foundation (2026-03-02)
 
 - [x] Bridge `AmigaUIShell` -> `AppRuntimeManager` branché via interface interne.

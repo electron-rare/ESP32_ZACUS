@@ -696,9 +696,10 @@ void applyStartupMode(BootModeStore::StartupMode mode) {
 
 void printBootModeStatus() {
   const BootModeStore::StartupMode mode = currentStartupMode();
-  Serial.printf("BOOT_MODE_STATUS mode=%s media_validated=%u\n",
+  Serial.printf("BOOT_MODE_STATUS mode=%s media_validated=%u amiga_shell_boot=%u\n",
                 BootModeStore::modeLabel(mode),
-                g_boot_mode_store.isMediaValidated() ? 1U : 0U);
+                g_boot_mode_store.isMediaValidated() ? 1U : 0U,
+                g_amiga_shell_mode_boot ? 1U : 0U);
 }
 
 uint32_t hashSceneFxSeed(uint32_t value) {
@@ -3870,6 +3871,63 @@ bool runtimeHandleActionWithLog(const AppAction& action, uint32_t now_ms, const 
   return ok;
 }
 
+const char* inferAppActionContentType(const String& payload, const char* explicit_type) {
+  if (explicit_type != nullptr && explicit_type[0] != '\0') {
+    return explicit_type;
+  }
+  return (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain";
+}
+
+void buildAppStartRequest(AppStartRequest* out_request,
+                          const String& app_id,
+                          const String& mode,
+                          const String& source,
+                          const char* default_mode,
+                          const char* default_source) {
+  if (out_request == nullptr) {
+    return;
+  }
+  *out_request = {};
+  copyText(out_request->id, sizeof(out_request->id), app_id.c_str());
+  copyText(out_request->mode,
+           sizeof(out_request->mode),
+           mode.isEmpty() ? default_mode : mode.c_str());
+  copyText(out_request->source,
+           sizeof(out_request->source),
+           source.isEmpty() ? default_source : source.c_str());
+}
+
+void buildAppStopRequest(AppStopRequest* out_request,
+                         const String& app_id,
+                         const String& reason,
+                         const char* default_reason) {
+  if (out_request == nullptr) {
+    return;
+  }
+  *out_request = {};
+  copyText(out_request->id, sizeof(out_request->id), app_id.c_str());
+  copyText(out_request->reason,
+           sizeof(out_request->reason),
+           reason.isEmpty() ? default_reason : reason.c_str());
+}
+
+void buildAppActionRequest(AppAction* out_action,
+                           const String& app_id,
+                           const String& action_name,
+                           const String& payload,
+                           const String& content_type) {
+  if (out_action == nullptr) {
+    return;
+  }
+  *out_action = {};
+  copyText(out_action->id, sizeof(out_action->id), app_id.c_str());
+  copyText(out_action->name, sizeof(out_action->name), action_name.c_str());
+  copyText(out_action->payload, sizeof(out_action->payload), payload.c_str());
+  copyText(out_action->content_type,
+           sizeof(out_action->content_type),
+           inferAppActionContentType(payload, content_type.c_str()));
+}
+
 bool amigaShellOpenAppBridge(const char* app_id, const char* mode, const char* source) {
   if (app_id == nullptr || app_id[0] == '\0') {
     Serial.println("APP_OPEN_FAIL id=<empty> reason=missing_app_id channel=amiga_shell_bridge");
@@ -5525,9 +5583,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     app_id.trim();
     mode.trim();
     AppStartRequest request = {};
-    copyText(request.id, sizeof(request.id), app_id.c_str());
-    copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
-    copyText(request.source, sizeof(request.source), "control");
+    buildAppStartRequest(&request, app_id, mode, "control", "default", "control");
     const bool ok = runtimeStartAppWithLog(request, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = g_app_runtime_manager.current().last_error;
@@ -5545,7 +5601,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
       }
     }
     AppStopRequest request = {};
-    copyText(request.reason, sizeof(request.reason), reason.c_str());
+    buildAppStopRequest(&request, "", reason, "control");
     const bool ok = runtimeStopAppWithLog(request, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = "app_close_failed";
@@ -5568,11 +5624,7 @@ bool dispatchControlActionImpl(const String& action_raw, uint32_t now_ms, String
     action_name.trim();
     payload.trim();
     AppAction app_action = {};
-    copyText(app_action.name, sizeof(app_action.name), action_name.c_str());
-    copyText(app_action.payload, sizeof(app_action.payload), payload.c_str());
-    copyText(app_action.content_type,
-             sizeof(app_action.content_type),
-             (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain");
+    buildAppActionRequest(&app_action, "", action_name, payload, "");
     const bool ok = runtimeHandleActionWithLog(app_action, now_ms, "control_action");
     if (!ok && out_error != nullptr) {
       *out_error = g_app_runtime_manager.current().last_error;
@@ -6129,9 +6181,7 @@ void setupWebUiImpl() {
       return;
     }
     AppStartRequest request = {};
-    copyText(request.id, sizeof(request.id), app_id.c_str());
-    copyText(request.mode, sizeof(request.mode), mode.isEmpty() ? "default" : mode.c_str());
-    copyText(request.source, sizeof(request.source), source.isEmpty() ? "api" : source.c_str());
+    buildAppStartRequest(&request, app_id, mode, source, "default", "api");
     const bool ok = runtimeStartAppWithLog(request, millis(), "web_api");
     StaticJsonDocument<256> response;
     response["ok"] = ok;
@@ -6157,8 +6207,7 @@ void setupWebUiImpl() {
       }
     }
     AppStopRequest request = {};
-    copyText(request.id, sizeof(request.id), app_id.c_str());
-    copyText(request.reason, sizeof(request.reason), reason.isEmpty() ? "api" : reason.c_str());
+    buildAppStopRequest(&request, app_id, reason, "api");
     const bool ok = runtimeStopAppWithLog(request, millis(), "web_api");
     StaticJsonDocument<192> response;
     response["ok"] = ok;
@@ -6195,14 +6244,8 @@ void setupWebUiImpl() {
       g_web_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_action\"}");
       return;
     }
-    if (content_type.isEmpty()) {
-      content_type = (payload.startsWith("{") || payload.startsWith("[")) ? "application/json" : "text/plain";
-    }
     AppAction action = {};
-    copyText(action.id, sizeof(action.id), app_id.c_str());
-    copyText(action.name, sizeof(action.name), action_name.c_str());
-    copyText(action.payload, sizeof(action.payload), payload.c_str());
-    copyText(action.content_type, sizeof(action.content_type), content_type.c_str());
+    buildAppActionRequest(&action, app_id, action_name, payload, content_type);
     const bool ok = runtimeHandleActionWithLog(action, millis(), "web_api");
     StaticJsonDocument<256> response;
     response["ok"] = ok;
@@ -8076,8 +8119,13 @@ void setup() {
   app_context.resource = &g_resource_coordinator;
   g_app_runtime_manager.configure(&g_app_registry, app_context);
   g_amiga_shell.setRuntimeBridge(&kAmigaAppRuntimeBridge);
+  g_amiga_shell.setTouchEmulationMode(true);
 
-  g_app_coordinator.begin(&g_runtime_services);
+  if (g_amiga_shell_mode_boot) {
+    Serial.println("[BOOT] skip app_coordinator.begin (amiga_shell_mode=1)");
+  } else {
+    g_app_coordinator.begin(&g_runtime_services);
+  }
 }
 
 void runRuntimeIteration(uint32_t now_ms) {
@@ -8310,8 +8358,20 @@ void loop() {
   
   // Route to AmigaUI Shell or traditional app coordinator based on boot mode
   if (g_amiga_shell_mode_boot) {
+    ButtonEvent event;
+    while (g_buttons.pollEvent(&event)) {
+      g_amiga_shell.handleButtonInput(event.key);
+    }
+
+    TouchPoint touch;
+    if (g_touch.poll(&touch) && touch.touched) {
+      g_amiga_shell.handleTouchInput(touch.x, touch.y);
+    }
+
     // AmigaUI Shell mode: draw grid launcher with app icons
     g_amiga_shell.onTick(16);  // ~60 FPS tick (16ms)
+    lv_task_handler();         // Process LVGL rendering (critical for display update!)
+    yield();
   } else {
     // Traditional scenario/story mode
     g_app_coordinator.tick(now_ms);

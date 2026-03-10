@@ -19,6 +19,9 @@ struct AmigaAppRuntimeBridge {
 
 class AmigaUIShell {
  public:
+  AmigaUIShell();
+  ~AmigaUIShell();
+  
   bool init(HardwareManager* hw, UiManager* ui, AppRegistry* registry);
   void setRuntimeBridge(const AmigaAppRuntimeBridge* bridge);
   void setTouchManager(TouchManager* touch_mgr);  // For touch emulation integration
@@ -38,10 +41,7 @@ class AmigaUIShell {
   uint8_t getTouchGridIndex(uint16_t x, uint16_t y);
   
   // Visual
-  void drawMainMenu();
   void drawAppGrid();
-  void drawSelectionHighlight(uint8_t index);
-  void playTransitionFX();
 
   // Runtime bridge
   bool requestOpenApp(const char* app_id, const char* mode, const char* source);
@@ -61,11 +61,14 @@ class AmigaUIShell {
   bool cursor_direction_toggle_ = false;  // false=LEFT, true=RIGHT for button 4
   
   // Current state
-  uint8_t selected_index_ = 0;  // 0-15 for 4x4 grid
+  uint8_t selected_index_ = 0;  // Current selection index in apps_ catalog
   uint32_t animation_elapsed_ms_ = 0;
   bool animating_ = false;
   uint32_t last_launch_ms_ = 0U;
+  uint32_t transition_start_ms_ = 0U;  // For non-blocking transition animation
+  bool transition_active_ = false;
   static constexpr uint32_t LAUNCH_DEBOUNCE_MS = 450U;
+  static constexpr uint32_t TRANSITION_DURATION_MS = 300U;  // Non-blocking fade duration
   
   // Theme colors (Amiga neon)
   static constexpr uint32_t COLOR_CYAN = 0x00FFFF;
@@ -82,18 +85,23 @@ class AmigaUIShell {
   struct AppIcon {
     String name;
     String app_id;
+    String icon_path;
     uint32_t color;
   };
   
   // App catalog (dynamically loaded from registry)
   std::vector<AppIcon> apps_;
+  std::vector<lv_obj_t*> app_buttons_;  // LVGL button objects (created once at init)
   
   void loadAppsFromRegistry();
   uint32_t getAppColor(size_t index) const;
-  
-  void drawIcon(uint16_t x, uint16_t y, const AppIcon& icon, bool selected);
-  void drawPulseEffect(uint16_t x, uint16_t y, float intensity);
-  void drawFadeTransition(uint8_t opacity);
+  void initializeButtonsLVGL();  // Create all 20 buttons once at boot
+  void cleanupButtonsLVGL();     // Destroy all LVGL button objects (for memory management)
+  void updateButtonStyles();     // Update selection highlight only
+  void updateTransitionAnimation();  // Update non-blocking fade transition
+  uint8_t effectiveGridRows() const;
+  void syncTouchEmulatorGrid();
+  void closeRunningAppFromMenu();
   
   // Grid-to-pixel offset calculation
   static constexpr uint16_t GRID_START_X = 16;

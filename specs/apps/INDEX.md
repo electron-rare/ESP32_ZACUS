@@ -10,8 +10,8 @@ Specs de développement par application, alignées sur le runtime actuel (`AppRe
 - Si `required_capabilities` non disponibles: erreur `resource_busy`.
 - Si `asset_manifest` manquant et app offline: erreur `missing_asset`.
 
-## Plan de Delivery
-- [Plan Sprint Applications](./IMPLEMENTATION_SPRINT_PLAN.md)
+## Launcher / Workbench
+- [Grille d'Apps type Workbench Amiga](./workbench_amiga_grid.md)
 
 ## Applications
 - [Lecteur Audio (`audio_player`)](./audio_player.md) - module `AudioPlayerModule`, scène `SCENE_AUDIO_PLAYER`
