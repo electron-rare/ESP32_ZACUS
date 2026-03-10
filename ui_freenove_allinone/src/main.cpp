@@ -3711,8 +3711,10 @@ void setup() {
   
   g_ui.setLaDetectionState(false, 0U, 0U, g_hardware_cfg.mic_la_stable_ms, 0U, g_hardware_cfg.mic_la_timeout_ms);
   g_ui.setHardwareSnapshotRef(&g_hardware.snapshotRef());
-  refreshSceneIfNeeded(true);
-  startPendingAudioIfAny();
+  
+  // Boot directly to Amiga UI Shell (skip default scenario rendering)
+  // refreshSceneIfNeeded(true);
+  // startPendingAudioIfAny();
 }
 
 void loop() {
