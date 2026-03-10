@@ -1,67 +1,38 @@
-// app_runtime_manager.h - App lifecycle: open/close/action state machine.
+// app_runtime_manager.h - app lifecycle orchestration.
 #pragma once
 
-#include <Arduino.h>
-#include "app/app_module.h"
-#include "app/app_registry.h"
+#include <cstdint>
+#include <memory>
 
-struct RuntimeServices;
+#include "app/app_registry.h"
+#include "app/app_runtime_types.h"
 
 class AppRuntimeManager {
  public:
-  enum class State : uint8_t {
-    kIdle = 0,
-    kStarting,
-    kRunning,
-    kClosing,
-    kError,
-  };
-
-  struct Snapshot {
-    State state = State::kIdle;
-    const char* app_id = "";
-    const char* entry_screen = "";
-    const char* last_error = "";
-    uint32_t opened_at_ms = 0U;
-  };
-
-  static constexpr uint8_t kMaxModules = 24U;
-
   AppRuntimeManager() = default;
 
-  void begin(AppRegistry* registry, RuntimeServices* services);
+  // New runtime API.
+  void configure(AppRegistry* registry, const AppContext& context);
+  bool startApp(const AppStartRequest& request, uint32_t now_ms);
+  bool stopApp(const AppStopRequest& request, uint32_t now_ms);
+  bool handleAction(const AppAction& action, uint32_t now_ms);
+  void tick(uint32_t now_ms);
+  AppRuntimeStatus current() const;
+  const AppDescriptor* currentDescriptor() const;
 
-  // Register a module (call during setup, before any open).
-  bool registerModule(IAppModule* module);
-
-  // App lifecycle.
+  // Legacy compatibility API (used by workbench shell).
   bool open(const char* app_id, const char* mode, uint32_t now_ms);
   bool close(const char* reason, uint32_t now_ms);
   bool action(const char* action_name, const char* payload);
-  void tick(uint32_t now_ms);
-
-  // Status.
-  State state() const { return state_; }
-  Snapshot snapshot() const;
-  bool isRunning() const { return state_ == State::kRunning; }
-  bool isIdle() const { return state_ == State::kIdle; }
-  const char* currentAppId() const { return current_app_id_; }
+  bool isRunning() const { return status_.state == AppRuntimeState::kRunning; }
+  bool isIdle() const { return status_.state == AppRuntimeState::kIdle; }
 
  private:
-  IAppModule* findModule(const char* app_id) const;
-  void transitionTo(State next, const char* reason);
+  uint32_t evaluateMissingCapabilities(const AppDescriptor& descriptor) const;
 
   AppRegistry* registry_ = nullptr;
-  RuntimeServices* services_ = nullptr;
-
-  IAppModule* modules_[kMaxModules] = {nullptr};
-  uint8_t module_count_ = 0U;
-
-  IAppModule* active_module_ = nullptr;
-  State state_ = State::kIdle;
-  char current_app_id_[24] = {0};
-  char current_entry_screen_[40] = {0};
-  char last_error_[64] = {0};
-  uint32_t opened_at_ms_ = 0U;
-  uint32_t close_requested_ms_ = 0U;
+  AppContext context_ = {};
+  std::unique_ptr<IAppModule> module_;
+  const AppDescriptor* current_descriptor_ = nullptr;
+  AppRuntimeStatus status_ = {};
 };

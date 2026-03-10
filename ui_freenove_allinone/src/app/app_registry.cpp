@@ -2,7 +2,10 @@
 #include "app/app_registry.h"
 
 #include <ArduinoJson.h>
+#include <cctype>
+#include <cstring>
 #include <cstdio>
+#include <vector>
 
 #include "core/str_utils.h"
 #include "storage_manager.h"
@@ -102,6 +105,11 @@ bool AppRegistry::loadFromFs(const StorageManager& storage, const char* registry
   return true;
 }
 
+bool AppRegistry::loadFromBuffer(const char* json_buffer, size_t len) {
+  (void)len;
+  return loadFromJson(json_buffer);
+}
+
 const AppDescriptor* AppRegistry::find(const char* id) const {
   if (id == nullptr || id[0] == '\0') return nullptr;
   for (const AppDescriptor& d : descriptors_) {
@@ -182,6 +190,7 @@ bool AppRegistry::loadFromJson(const char* json_text) {
 
     descriptors_.push_back(d);
   }
+  rebuildLegacyEntries();
   return !descriptors_.empty();
 }
 
@@ -208,6 +217,7 @@ void AppRegistry::loadFallbackCatalog() {
     d.supports_streaming    = f.streaming;
     descriptors_.push_back(d);
   }
+  rebuildLegacyEntries();
 }
 
 uint32_t AppRegistry::parseCapabilityMask(const char* csv_caps) {
@@ -233,4 +243,51 @@ uint32_t AppRegistry::parseCapabilityMask(const char* csv_caps) {
     token = std::strtok(nullptr, ",| ");
   }
   return mask;
+}
+
+const AppEntry* AppRegistry::entry(uint8_t index) const {
+  if (index >= count_) return nullptr;
+  return &entries_[index];
+}
+
+const AppEntry* AppRegistry::findById(const char* id) const {
+  if (id == nullptr || id[0] == '\0') return nullptr;
+  for (uint8_t i = 0U; i < count_; ++i) {
+    if (core::equalsIgnoreCase(entries_[i].id, id)) return &entries_[i];
+  }
+  return nullptr;
+}
+
+uint8_t AppRegistry::enabledCount() const {
+  uint8_t enabled = 0U;
+  for (uint8_t i = 0U; i < count_; ++i) {
+    if (entries_[i].enabled) enabled += 1U;
+  }
+  return enabled;
+}
+
+const AppEntry* AppRegistry::enabledEntry(uint8_t visible_index) const {
+  uint8_t seen = 0U;
+  for (uint8_t i = 0U; i < count_; ++i) {
+    if (!entries_[i].enabled) continue;
+    if (seen == visible_index) return &entries_[i];
+    seen += 1U;
+  }
+  return nullptr;
+}
+
+void AppRegistry::rebuildLegacyEntries() {
+  count_ = 0U;
+  std::memset(entries_, 0, sizeof(entries_));
+  for (const AppDescriptor& d : descriptors_) {
+    if (count_ >= kMaxApps) break;
+    AppEntry& out = entries_[count_++];
+    core::copyText(out.id, sizeof(out.id), d.id);
+    core::copyText(out.title, sizeof(out.title), d.title);
+    core::copyText(out.category, sizeof(out.category), d.category);
+    core::copyText(out.icon_path, sizeof(out.icon_path), d.icon_path);
+    core::copyText(out.entry_screen, sizeof(out.entry_screen), d.entry_screen);
+    out.enabled = d.enabled;
+    out.required_capabilities = d.required_capabilities;
+  }
 }

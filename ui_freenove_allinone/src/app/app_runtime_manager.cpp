@@ -205,6 +205,31 @@ void AppRuntimeManager::configure(AppRegistry* registry, const AppContext& conte
   status_             = {};
 }
 
+bool AppRuntimeManager::open(const char* app_id, const char* mode, uint32_t now_ms) {
+  AppStartRequest request = {};
+  core::copyText(request.id, sizeof(request.id), (app_id != nullptr) ? app_id : "");
+  core::copyText(request.mode, sizeof(request.mode), (mode != nullptr) ? mode : "default");
+  core::copyText(request.source, sizeof(request.source), "workbench");
+  return startApp(request, now_ms);
+}
+
+bool AppRuntimeManager::close(const char* reason, uint32_t now_ms) {
+  AppStopRequest request = {};
+  core::copyText(request.id, sizeof(request.id), status_.id);
+  core::copyText(request.reason, sizeof(request.reason), (reason != nullptr) ? reason : "api");
+  return stopApp(request, now_ms);
+}
+
+bool AppRuntimeManager::action(const char* action_name, const char* payload) {
+  AppAction action_request = {};
+  core::copyText(action_request.id, sizeof(action_request.id), status_.id);
+  core::copyText(action_request.name, sizeof(action_request.name),
+                 (action_name != nullptr) ? action_name : "");
+  core::copyText(action_request.payload, sizeof(action_request.payload),
+                 (payload != nullptr) ? payload : "");
+  return handleAction(action_request, millis());
+}
+
 bool AppRuntimeManager::startApp(const AppStartRequest& request, uint32_t now_ms) {
   if (registry_ == nullptr || request.id[0] == '\0') {
     core::copyText(status_.last_error, sizeof(status_.last_error), "app_registry_unavailable");

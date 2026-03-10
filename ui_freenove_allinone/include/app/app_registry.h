@@ -1,7 +1,15 @@
-// app_registry.h - App catalog loaded from registry.json.
+// app_registry.h - app catalog registry with legacy AppEntry compatibility.
 #pragma once
 
 #include <Arduino.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+#include "app/app_runtime_types.h"
+
+class StorageManager;
 
 struct AppEntry {
   char id[24] = {0};
@@ -10,19 +18,8 @@ struct AppEntry {
   char icon_path[48] = {0};
   char entry_screen[40] = {0};
   bool enabled = true;
-  uint8_t required_capabilities = 0U;  // bitmask (lightweight)
+  uint32_t required_capabilities = 0U;
 };
-
-// Capability bits for required_capabilities bitmask.
-namespace AppCap {
-constexpr uint8_t kAudioOut   = 0x01U;
-constexpr uint8_t kAudioIn    = 0x02U;
-constexpr uint8_t kStorageFs  = 0x04U;
-constexpr uint8_t kStorageSd  = 0x08U;
-constexpr uint8_t kCamera     = 0x10U;
-constexpr uint8_t kWifi       = 0x20U;
-constexpr uint8_t kGpuUi      = 0x40U;
-}  // namespace AppCap
 
 class AppRegistry {
  public:
@@ -30,17 +27,28 @@ class AppRegistry {
 
   AppRegistry() = default;
 
-  bool loadFromJson(const char* json_path);
+  // New API used by runtime manager / web contracts.
+  bool loadFromFs(const StorageManager& storage, const char* registry_path = "/apps/registry.json");
+  bool loadFromJson(const char* json_text);
   bool loadFromBuffer(const char* json_buffer, size_t len);
 
+  const AppDescriptor* find(const char* id) const;
+  std::vector<AppDescriptor> listByCategory(const char* category) const;
+  const std::vector<AppDescriptor>& descriptors() const;
+
+  // Legacy API used by workbench UI modules.
   uint8_t count() const { return count_; }
   const AppEntry* entry(uint8_t index) const;
   const AppEntry* findById(const char* id) const;
-
   uint8_t enabledCount() const;
   const AppEntry* enabledEntry(uint8_t visible_index) const;
 
  private:
-  AppEntry entries_[kMaxApps];
+  void loadFallbackCatalog();
+  static uint32_t parseCapabilityMask(const char* csv_caps);
+  void rebuildLegacyEntries();
+
+  std::vector<AppDescriptor> descriptors_;
+  AppEntry entries_[kMaxApps] = {};
   uint8_t count_ = 0U;
 };

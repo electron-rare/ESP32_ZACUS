@@ -3,7 +3,6 @@
 
 #include <cstring>
 
-#include "app/app_registry.h"
 #include "runtime/runtime_services.h"
 
 bool AudioPlayerModule::onOpen(const AppEntry& entry, const char* mode, RuntimeServices* services) {
