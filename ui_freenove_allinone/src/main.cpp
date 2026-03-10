@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <WebServer.h>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -31,6 +32,9 @@ namespace {
 constexpr const char* kDefaultScenarioFile = "/story/scenarios/DEFAULT.json";
 constexpr const char* kDiagAudioFile = "/music/boot_radio.mp3";
 constexpr size_t kSerialLineCapacity = 192U;
+constexpr size_t kMaxJsonBodyBytes = 1024U;
+constexpr size_t kMaxScenarioIdLen = 48U;
+constexpr size_t kMaxUserFilenameLen = 64U;
 constexpr bool kBootDiagnosticTone = true;
 
 AudioManager g_audio;
@@ -63,6 +67,7 @@ bool g_la_dispatch_in_progress = false;
 char g_last_action_step_key[72] = {0};
 char g_serial_line[kSerialLineCapacity] = {0};
 size_t g_serial_line_len = 0U;
+bool g_serial_discard_until_eol = false;
 
 // Watchdog Timer Configuration
 constexpr uint32_t kDefaultWatchdogTimeoutSec = 30U;  // 30 seconds
@@ -70,6 +75,61 @@ uint32_t g_watchdog_feeds = 0U;  // Counter for monitoring
 uint32_t g_watchdog_last_feed_ms = 0U;
 
 bool dispatchScenarioEventByName(const char* event_name, uint32_t now_ms);
+
+enum class SerialCommandId : uint8_t {
+  kPing = 0,
+  kHelp,
+  kStatus,
+  kBtnRead,
+  kNext,
+  kUnlock,
+  kReset,
+  kScList,
+  kScCoverage,
+  kScRevalidate,
+  kScRevalidateAll,
+  kStoryRefreshSd,
+  kStorySdStatus,
+  kCamStatus,
+  kRecStatus,
+  kNetStatus,
+  kWifiStatus,
+  kEspNowStatus,
+  kEspNowStatusJson,
+  kAudioStop,
+  kStop,
+  kMutexStatus,
+};
+
+struct SerialCommandEntry {
+  const char* name;
+  SerialCommandId id;
+};
+
+constexpr std::array<SerialCommandEntry, 22> kSerialCommandMap = {{
+    {"PING", SerialCommandId::kPing},
+    {"HELP", SerialCommandId::kHelp},
+    {"STATUS", SerialCommandId::kStatus},
+    {"BTN_READ", SerialCommandId::kBtnRead},
+    {"NEXT", SerialCommandId::kNext},
+    {"UNLOCK", SerialCommandId::kUnlock},
+    {"RESET", SerialCommandId::kReset},
+    {"SC_LIST", SerialCommandId::kScList},
+    {"SC_COVERAGE", SerialCommandId::kScCoverage},
+    {"SC_REVALIDATE", SerialCommandId::kScRevalidate},
+    {"SC_REVALIDATE_ALL", SerialCommandId::kScRevalidateAll},
+    {"STORY_REFRESH_SD", SerialCommandId::kStoryRefreshSd},
+    {"STORY_SD_STATUS", SerialCommandId::kStorySdStatus},
+    {"CAM_STATUS", SerialCommandId::kCamStatus},
+    {"REC_STATUS", SerialCommandId::kRecStatus},
+    {"NET_STATUS", SerialCommandId::kNetStatus},
+    {"WIFI_STATUS", SerialCommandId::kWifiStatus},
+    {"ESPNOW_STATUS", SerialCommandId::kEspNowStatus},
+    {"ESPNOW_STATUS_JSON", SerialCommandId::kEspNowStatusJson},
+    {"AUDIO_STOP", SerialCommandId::kAudioStop},
+    {"STOP", SerialCommandId::kStop},
+    {"MUTEX_STATUS", SerialCommandId::kMutexStatus},
+}};
 
 const char* audioPackToFile(const char* pack_id) {
   if (pack_id == nullptr || pack_id[0] == '\0') {
@@ -104,8 +164,15 @@ bool loadScenarioByIdPreferStoryFile(const char* scenario_id, String* out_source
   }
   String normalized_id = scenario_id;
   normalized_id.trim();
-  if (normalized_id.isEmpty()) {
+  if (normalized_id.isEmpty() || normalized_id.length() > kMaxScenarioIdLen) {
     return false;
+  }
+  for (size_t index = 0U; index < normalized_id.length(); ++index) {
+    const char ch = normalized_id[index];
+    const bool is_alnum = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+    if (!(is_alnum || ch == '_' || ch == '-')) {
+      return false;
+    }
   }
 
   String story_path = "/story/scenarios/";
@@ -895,6 +962,43 @@ bool splitSsidPass(const char* argument, String* out_ssid, String* out_pass) {
   return !out_ssid->isEmpty();
 }
 
+bool isSafeUserFilename(const String& filename) {
+  if (filename.isEmpty() || filename.length() > kMaxUserFilenameLen) {
+    return false;
+  }
+  if (filename.indexOf("..") >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+    return false;
+  }
+  for (size_t index = 0U; index < filename.length(); ++index) {
+    const char ch = filename[index];
+    const bool is_alnum = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+    if (!(is_alnum || ch == '_' || ch == '-' || ch == '.')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool isSafeMediaPath(String path) {
+  path.trim();
+  if (path.isEmpty() || path.length() > 180U || !path.startsWith("/")) {
+    return false;
+  }
+  if (path.indexOf("..") >= 0 || path.indexOf('\\') >= 0 || path.indexOf(':') >= 0) {
+    return false;
+  }
+  if (!(path.startsWith("/music/") || path.startsWith("/picture/") || path.startsWith("/recorder/") ||
+        path.startsWith("/story/audio/"))) {
+    return false;
+  }
+  for (size_t index = 0U; index < path.length(); ++index) {
+    if (static_cast<unsigned char>(path[index]) < 32U) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void printNetworkStatus() {
   const NetworkManager::Snapshot net = g_network.snapshot();
   Serial.printf("NET_STATUS state=%s mode=%s sta=%u connecting=%u ap=%u fallback_ap=%u espnow=%u ip=%s sta_ssid=%s "
@@ -1251,8 +1355,18 @@ bool webParseJsonBody(StaticJsonDocument<N>* out_document) {
   if (body.isEmpty()) {
     return false;
   }
+  if (body.length() > kMaxJsonBodyBytes) {
+    Serial.printf("[WEB] json body too large: %u > %u\n",
+                  static_cast<unsigned int>(body.length()),
+                  static_cast<unsigned int>(kMaxJsonBodyBytes));
+    return false;
+  }
   const DeserializationError error = deserializeJson(*out_document, body);
-  return !error;
+  if (error) {
+    Serial.printf("[WEB] json parse error: %s\n", error.c_str());
+    return false;
+  }
+  return true;
 }
 
 void webFillEspNowStatus(JsonObject out, const NetworkManager::Snapshot& net) {
@@ -1605,6 +1719,9 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
   if (std::strcmp(action_id, "ACTION_CAMERA_SNAPSHOT") == 0) {
     const char* filename = action_doc["config"]["filename"] | "";
     const char* event_name = action_doc["config"]["event_on_success"] | "SERIAL:CAMERA_CAPTURED";
+    if (filename[0] != '\0' && !isSafeUserFilename(filename)) {
+      return false;
+    }
     String out_path;
     const bool ok = g_camera.snapshotToFile(filename[0] != '\0' ? filename : nullptr, &out_path);
     Serial.printf("[ACTION] CAMERA_SNAPSHOT ok=%u path=%s\n", ok ? 1U : 0U, ok ? out_path.c_str() : "n/a");
@@ -1636,15 +1753,22 @@ bool executeStoryAction(const char* action_id, const ScenarioSnapshot& snapshot,
   }
 
   if (std::strcmp(action_id, "ACTION_MEDIA_PLAY_FILE") == 0) {
-    const char* media_file = action_doc["config"]["file"] | action_doc["config"]["path"] | "/music/boot_radio.mp3";
-    return g_media.play(media_file, &g_audio);
+    String media_file = action_doc["config"]["file"] | action_doc["config"]["path"] | "/music/boot_radio.mp3";
+    media_file.trim();
+    if (!isSafeMediaPath(media_file)) {
+      return false;
+    }
+    return g_media.play(media_file.c_str(), &g_audio);
   }
 
   if (std::strcmp(action_id, "ACTION_REC_START") == 0) {
     const uint16_t seconds = static_cast<uint16_t>(action_doc["config"]["seconds"] | action_doc["config"]["duration_sec"] |
                                                    g_media_cfg.record_max_seconds);
     const char* filename = action_doc["config"]["filename"] | "";
-    return g_media.startRecording(seconds, filename);
+    if (filename[0] != '\0' && !isSafeUserFilename(filename)) {
+      return false;
+    }
+    return g_media.startRecording(seconds, filename[0] != '\0' ? filename : nullptr);
   }
 
   if (std::strcmp(action_id, "ACTION_REC_STOP") == 0) {
@@ -1878,6 +2002,12 @@ bool dispatchControlAction(const String& action_raw, uint32_t now_ms, String* ou
     const size_t prefix_len = std::strlen("CAM_SNAPSHOT");
     String filename = action.substring(static_cast<unsigned int>(prefix_len));
     filename.trim();
+    if (!filename.isEmpty() && !isSafeUserFilename(filename)) {
+      if (out_error != nullptr) {
+        *out_error = "camera_snapshot_filename_invalid";
+      }
+      return false;
+    }
     String out_path;
     const bool ok = g_camera.snapshotToFile(filename.isEmpty() ? nullptr : filename.c_str(), &out_path);
     if (ok) {
@@ -1891,7 +2021,7 @@ bool dispatchControlAction(const String& action_raw, uint32_t now_ms, String* ou
   if (startsWithIgnoreCase(action.c_str(), "MEDIA_PLAY ")) {
     String media_path = action.substring(static_cast<unsigned int>(std::strlen("MEDIA_PLAY ")));
     media_path.trim();
-    const bool ok = !media_path.isEmpty() && g_media.play(media_path.c_str(), &g_audio);
+    const bool ok = isSafeMediaPath(media_path) && g_media.play(media_path.c_str(), &g_audio);
     if (!ok && out_error != nullptr) {
       *out_error = "media_play_failed";
     }
@@ -1917,6 +2047,12 @@ bool dispatchControlAction(const String& action_raw, uint32_t now_ms, String* ou
           seconds = static_cast<uint16_t>(parsed);
         }
       }
+    }
+    if (!filename.isEmpty() && !isSafeUserFilename(filename)) {
+      if (out_error != nullptr) {
+        *out_error = "rec_filename_invalid";
+      }
+      return false;
     }
     return g_media.startRecording(seconds, filename.isEmpty() ? nullptr : filename.c_str());
   }
@@ -2179,10 +2315,22 @@ void setupWebUi() {
   g_web_server.on("/api/media/play", HTTP_POST, []() {
     String path = g_web_server.arg("path");
     StaticJsonDocument<256> request_json;
-    if (webParseJsonBody(&request_json) && path.isEmpty()) {
+    const bool has_json = webParseJsonBody(&request_json);
+    if (has_json) {
+      if (request_json.containsKey("path") && !request_json["path"].is<const char*>()) {
+        webSendResult("MEDIA_PLAY", false);
+        return;
+      }
+      if (request_json.containsKey("file") && !request_json["file"].is<const char*>()) {
+        webSendResult("MEDIA_PLAY", false);
+        return;
+      }
+    }
+    if (has_json && path.isEmpty()) {
       path = request_json["path"] | request_json["file"] | "";
     }
-    const bool ok = !path.isEmpty() && g_media.play(path.c_str(), &g_audio);
+    path.trim();
+    const bool ok = isSafeMediaPath(path) && g_media.play(path.c_str(), &g_audio);
     webSendResult("MEDIA_PLAY", ok);
   });
 
@@ -2196,12 +2344,25 @@ void setupWebUi() {
     String filename = g_web_server.arg("filename");
     StaticJsonDocument<256> request_json;
     if (webParseJsonBody(&request_json)) {
+      if (request_json.containsKey("seconds") && !request_json["seconds"].is<unsigned int>()) {
+        webSendResult("REC_START", false);
+        return;
+      }
+      if (request_json.containsKey("filename") && !request_json["filename"].is<const char*>()) {
+        webSendResult("REC_START", false);
+        return;
+      }
       if (request_json["seconds"].is<unsigned int>()) {
         seconds = static_cast<uint16_t>(request_json["seconds"].as<unsigned int>());
       }
       if (filename.isEmpty()) {
         filename = request_json["filename"] | "";
       }
+    }
+    filename.trim();
+    if (!filename.isEmpty() && !isSafeUserFilename(filename)) {
+      webSendResult("REC_START", false);
+      return;
     }
     const bool ok = g_media.startRecording(seconds, filename.isEmpty() ? nullptr : filename.c_str());
     webSendResult("REC_START", ok);
@@ -2251,6 +2412,18 @@ void setupWebUi() {
     }
     StaticJsonDocument<768> request_json;
     if (webParseJsonBody(&request_json)) {
+      if (request_json.containsKey("ssid") && !request_json["ssid"].is<const char*>()) {
+        webSendResult("WIFI_CONNECT", false);
+        return;
+      }
+      if (request_json.containsKey("pass") && !request_json["pass"].is<const char*>()) {
+        webSendResult("WIFI_CONNECT", false);
+        return;
+      }
+      if (request_json.containsKey("password") && !request_json["password"].is<const char*>()) {
+        webSendResult("WIFI_CONNECT", false);
+        return;
+      }
       if (ssid.isEmpty()) {
         ssid = request_json["ssid"] | "";
       }
@@ -2397,8 +2570,17 @@ void setupWebUi() {
   g_web_server.on("/api/control", HTTP_POST, []() {
     String action = g_web_server.arg("action");
     StaticJsonDocument<768> request_json;
-    if (webParseJsonBody(&request_json) && action.isEmpty()) {
-      action = request_json["action"] | "";
+    if (webParseJsonBody(&request_json)) {
+      if (request_json.containsKey("action") && !request_json["action"].is<const char*>()) {
+        StaticJsonDocument<192> response;
+        response["ok"] = false;
+        response["error"] = "invalid_action_type";
+        webSendJsonDocument(response, 400);
+        return;
+      }
+      if (action.isEmpty()) {
+        action = request_json["action"] | "";
+      }
     }
     String error;
     const bool ok = dispatchControlAction(action, millis(), &error);
@@ -2716,6 +2898,104 @@ void startPendingAudioIfAny() {
   g_scenario.notifyAudioDone(millis());
 }
 
+bool dispatchMappedSerialCommand(SerialCommandId id, uint32_t now_ms) {
+  switch (id) {
+    case SerialCommandId::kPing:
+      Serial.println("PONG");
+      return true;
+    case SerialCommandId::kHelp:
+      Serial.println(
+          "CMDS PING STATUS BTN_READ NEXT UNLOCK RESET "
+          "SC_LIST SC_LOAD <id> SC_COVERAGE SC_REVALIDATE SC_REVALIDATE_ALL SC_EVENT <type> [name] SC_EVENT_RAW <name> "
+          "STORY_REFRESH_SD STORY_SD_STATUS "
+          "HW_STATUS HW_STATUS_JSON HW_LED_SET <r> <g> <b> [brightness] [pulse] HW_LED_AUTO <ON|OFF> HW_MIC_STATUS HW_BAT_STATUS "
+          "MIC_TUNER_STATUS [ON|OFF|<period_ms>] "
+          "CAM_STATUS CAM_ON CAM_OFF CAM_SNAPSHOT [filename] "
+          "MEDIA_LIST <picture|music|recorder> MEDIA_PLAY <path> MEDIA_STOP REC_START [seconds] [filename] REC_STOP REC_STATUS "
+          "NET_STATUS WIFI_STATUS WIFI_TEST WIFI_CONFIG <ssid> <password> WIFI_STA <ssid> <pass> WIFI_CONNECT <ssid> <pass> WIFI_DISCONNECT "
+          "WIFI_AP_ON [ssid] [pass] WIFI_AP_OFF "
+          "ESPNOW_ON ESPNOW_OFF ESPNOW_STATUS ESPNOW_STATUS_JSON ESPNOW_PEER_ADD <mac> ESPNOW_PEER_DEL <mac> ESPNOW_PEER_LIST "
+          "ESPNOW_SEND <mac|broadcast> <text|json> "
+          "AUDIO_TEST AUDIO_TEST_FS AUDIO_PROFILE <idx> AUDIO_STATUS VOL <0..21> AUDIO_STOP STOP "
+          "WDT [status|TRIGGER|HANG <sec>] MUTEX_STATUS");
+      return true;
+    case SerialCommandId::kStatus:
+      printRuntimeStatus();
+      return true;
+    case SerialCommandId::kBtnRead:
+      printButtonRead();
+      return true;
+    case SerialCommandId::kNext: {
+      const bool ok = notifyScenarioButtonGuarded(5U, false, now_ms, "serial_next");
+      Serial.printf("ACK NEXT ok=%u\n", ok ? 1U : 0U);
+      return true;
+    }
+    case SerialCommandId::kUnlock: {
+      const bool ok = dispatchScenarioEventByName("UNLOCK", now_ms);
+      Serial.printf("ACK UNLOCK ok=%u\n", ok ? 1U : 0U);
+      return true;
+    }
+    case SerialCommandId::kReset:
+      g_scenario.reset();
+      g_last_action_step_key[0] = '\0';
+      Serial.println("ACK RESET");
+      return true;
+    case SerialCommandId::kScList:
+      printScenarioList();
+      return true;
+    case SerialCommandId::kScCoverage:
+      printScenarioCoverage();
+      return true;
+    case SerialCommandId::kScRevalidate:
+      runScenarioRevalidate(now_ms);
+      return true;
+    case SerialCommandId::kScRevalidateAll:
+      runScenarioRevalidateAll(now_ms);
+      return true;
+    case SerialCommandId::kStoryRefreshSd: {
+      const bool ok = refreshStoryFromSd();
+      Serial.printf("ACK STORY_REFRESH_SD ok=%u\n", ok ? 1U : 0U);
+      return true;
+    }
+    case SerialCommandId::kStorySdStatus:
+      Serial.printf("STORY_SD_STATUS ready=%u\n", g_storage.hasSdCard() ? 1U : 0U);
+      return true;
+    case SerialCommandId::kCamStatus:
+      printCameraStatus();
+      return true;
+    case SerialCommandId::kRecStatus:
+      printMediaStatus();
+      return true;
+    case SerialCommandId::kNetStatus:
+    case SerialCommandId::kWifiStatus:
+    case SerialCommandId::kEspNowStatus:
+      printNetworkStatus();
+      return true;
+    case SerialCommandId::kEspNowStatusJson:
+      printEspNowStatusJson();
+      return true;
+    case SerialCommandId::kAudioStop:
+      g_audio.stop();
+      Serial.println("ACK AUDIO_STOP");
+      return true;
+    case SerialCommandId::kStop:
+      g_audio.stop();
+      Serial.println("ACK STOP");
+      return true;
+    case SerialCommandId::kMutexStatus:
+      Serial.printf("MUTEX_STATUS audio_locks=%lu scenario_locks=%lu audio_timeouts=%lu "
+                    "scenario_timeouts=%lu max_audio_wait_us=%lu max_scenario_wait_us=%lu\n",
+                    MutexManager::audioLockCount(),
+                    MutexManager::scenarioLockCount(),
+                    MutexManager::audioTimeoutCount(),
+                    MutexManager::scenarioTimeoutCount(),
+                    MutexManager::maxAudioWaitUs(),
+                    MutexManager::maxScenarioWaitUs());
+      return true;
+  }
+  return false;
+}
+
 void handleSerialCommand(const char* command_line, uint32_t now_ms) {
   if (command_line == nullptr || command_line[0] == '\0') {
     return;
@@ -2738,26 +3018,11 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
     argument = nullptr;
   }
 
-  if (std::strcmp(command, "PING") == 0) {
-    Serial.println("PONG");
-    return;
-  }
-  if (std::strcmp(command, "HELP") == 0) {
-    Serial.println(
-        "CMDS PING STATUS BTN_READ NEXT UNLOCK RESET "
-        "SC_LIST SC_LOAD <id> SC_COVERAGE SC_REVALIDATE SC_REVALIDATE_ALL SC_EVENT <type> [name] SC_EVENT_RAW <name> "
-        "STORY_REFRESH_SD STORY_SD_STATUS "
-        "HW_STATUS HW_STATUS_JSON HW_LED_SET <r> <g> <b> [brightness] [pulse] HW_LED_AUTO <ON|OFF> HW_MIC_STATUS HW_BAT_STATUS "
-        "MIC_TUNER_STATUS [ON|OFF|<period_ms>] "
-        "CAM_STATUS CAM_ON CAM_OFF CAM_SNAPSHOT [filename] "
-        "MEDIA_LIST <picture|music|recorder> MEDIA_PLAY <path> MEDIA_STOP REC_START [seconds] [filename] REC_STOP REC_STATUS "
-        "NET_STATUS WIFI_STATUS WIFI_TEST WIFI_CONFIG <ssid> <password> WIFI_STA <ssid> <pass> WIFI_CONNECT <ssid> <pass> WIFI_DISCONNECT "
-        "WIFI_AP_ON [ssid] [pass] WIFI_AP_OFF "
-        "ESPNOW_ON ESPNOW_OFF ESPNOW_STATUS ESPNOW_STATUS_JSON ESPNOW_PEER_ADD <mac> ESPNOW_PEER_DEL <mac> ESPNOW_PEER_LIST "
-        "ESPNOW_SEND <mac|broadcast> <text|json> "
-        "AUDIO_TEST AUDIO_TEST_FS AUDIO_PROFILE <idx> AUDIO_STATUS VOL <0..21> AUDIO_STOP STOP "
-        "WDT [status|TRIGGER|HANG <sec>] MUTEX_STATUS");
-    return;
+  for (const SerialCommandEntry& entry : kSerialCommandMap) {
+    if (std::strcmp(command, entry.name) == 0) {
+      dispatchMappedSerialCommand(entry.id, now_ms);
+      return;
+    }
   }
   if (std::strcmp(command, "WDT") == 0) {
     // WDT commands - Watchdog Timer control
@@ -2842,6 +3107,18 @@ void handleSerialCommand(const char* command_line, uint32_t now_ms) {
     char scenario_id[kSerialLineCapacity] = {0};
     std::strncpy(scenario_id, argument, sizeof(scenario_id) - 1U);
     toUpperAsciiInPlace(scenario_id);
+    if (std::strlen(scenario_id) > kMaxScenarioIdLen) {
+      Serial.println("ERR SC_LOAD_ID");
+      return;
+    }
+    for (size_t index = 0U; scenario_id[index] != '\0'; ++index) {
+      const char ch = scenario_id[index];
+      const bool is_alnum = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+      if (!(is_alnum || ch == '_' || ch == '-')) {
+        Serial.println("ERR SC_LOAD_ID");
+        return;
+      }
+    }
     String load_source;
     String load_path;
     const bool ok = loadScenarioByIdPreferStoryFile(scenario_id, &load_source, &load_path);
@@ -3267,6 +3544,11 @@ void pollSerialCommands(uint32_t now_ms) {
     }
     const char ch = static_cast<char>(raw);
     if (ch == '\r' || ch == '\n') {
+      if (g_serial_discard_until_eol) {
+        g_serial_discard_until_eol = false;
+        g_serial_line_len = 0U;
+        continue;
+      }
       if (g_serial_line_len == 0U) {
         continue;
       }
@@ -3275,8 +3557,18 @@ void pollSerialCommands(uint32_t now_ms) {
       g_serial_line_len = 0U;
       continue;
     }
+    if (g_serial_discard_until_eol) {
+      continue;
+    }
+    if (static_cast<unsigned char>(ch) < 32U || static_cast<unsigned char>(ch) > 126U) {
+      g_serial_line_len = 0U;
+      g_serial_discard_until_eol = true;
+      Serial.println("ERR CMD_INVALID_CHAR");
+      continue;
+    }
     if (g_serial_line_len + 1U >= kSerialLineCapacity) {
       g_serial_line_len = 0U;
+      g_serial_discard_until_eol = true;
       Serial.println("ERR CMD_TOO_LONG");
       continue;
     }
