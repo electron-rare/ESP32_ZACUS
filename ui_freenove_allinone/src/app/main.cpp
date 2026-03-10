@@ -8307,5 +8307,13 @@ void runRuntimeIteration(uint32_t now_ms) {
 void loop() {
   const uint32_t now_ms = millis();
   pollSerialCommands(now_ms);
-  g_app_coordinator.tick(now_ms);
+  
+  // Route to AmigaUI Shell or traditional app coordinator based on boot mode
+  if (g_amiga_shell_mode_boot) {
+    // AmigaUI Shell mode: draw grid launcher with app icons
+    g_amiga_shell.onTick(16);  // ~60 FPS tick (16ms)
+  } else {
+    // Traditional scenario/story mode
+    g_app_coordinator.tick(now_ms);
+  }
 }
