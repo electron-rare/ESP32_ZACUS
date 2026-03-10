@@ -1,5 +1,6 @@
 // app_calculator.cpp - Calculator Implementation
 #include "app/app_calculator.h"
+#include "core/str_utils.h"
 
 AppCalculator g_app_calculator;
 
@@ -39,7 +40,7 @@ void AppCalculator::onAction(const AppAction& action) {
 
 void AppCalculator::reset() {
   result_ = 0.0;
-  strncpy(display_, "0", sizeof(display_) - 1);
+  core::copyText(display_, sizeof(display_), "0");
   history_[0] = '\0';
 }
 

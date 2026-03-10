@@ -4,13 +4,15 @@ Phase 6: Hardware Validation - Interactive Serial Testing
 Tests P1/P2 security hardening on ESP32-S3
 """
 
+import argparse
+import os
 import serial
 import sys
 import time
 from typing import Optional
 
 class ESP32Tester:
-    def __init__(self, port: str = "/dev/cu.usbmodem5AB90753301", baudrate: int = 115200):
+    def __init__(self, port: str, baudrate: int = 115200):
         self.port = port
         self.baudrate = baudrate
         self.ser: Optional[serial.Serial] = None
@@ -325,5 +327,12 @@ class ESP32Tester:
 
 
 if __name__ == "__main__":
-    tester = ESP32Tester()
+    parser = argparse.ArgumentParser(description="Phase 6 hardware validation over serial.")
+    parser.add_argument("--port", default=os.environ.get("ZACUS_SERIAL_PORT", ""))
+    parser.add_argument("--baud", type=int, default=int(os.environ.get("ZACUS_SERIAL_BAUD", "115200")))
+    args = parser.parse_args()
+    if not args.port:
+        parser.error("--port or ZACUS_SERIAL_PORT is required")
+
+    tester = ESP32Tester(port=args.port, baudrate=args.baud)
     tester.run_all_tests()

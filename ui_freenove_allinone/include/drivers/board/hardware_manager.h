@@ -89,6 +89,7 @@ class HardwareManager {
 
  private:
   bool beginMic();
+  void endMic();
   void updateMic(uint32_t now_ms);
   void updateBattery(uint32_t now_ms);
   void updateLed(uint32_t now_ms);

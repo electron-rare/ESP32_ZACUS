@@ -27,6 +27,8 @@ class AudioManager {
   void stop();
   void update();
   bool isPlaying() const;
+  void releaseOutputResources();
+  bool restoreOutputResources();
 
   void setVolume(uint8_t volume);
   uint8_t volume() const;
@@ -112,6 +114,8 @@ class AudioManager {
   bool pending_use_sd_ = false;
   bool pending_diagnostic_tone_ = false;
   uint32_t reopen_earliest_ms_ = 0U;
+  bool restore_pending_ = false;
+  uint32_t restore_retry_not_before_ms_ = 0U;
   uint32_t underrun_count_ = 0U;
   uint32_t underrun_last_note_ms_ = 0U;
   uint32_t underrun_last_log_ms_ = 0U;

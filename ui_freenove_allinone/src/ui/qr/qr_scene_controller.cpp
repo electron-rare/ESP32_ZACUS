@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <cstring>
+#include "core/str_utils.h"
 
 #include <lvgl.h>
 
@@ -13,18 +14,6 @@
 
 namespace ui {
 namespace {
-
-void copyTextSafe(char* out, size_t out_size, const char* value) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (value == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, value, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
 
 }  // namespace
 
@@ -73,7 +62,7 @@ void QrSceneController::handleDecodedPayload(const char* payload,
                                              lv_obj_t* subtitle_label,
                                              lv_obj_t* symbol_label) {
   const char* safe_payload = (payload != nullptr) ? payload : "";
-  copyTextSafe(last_payload_, sizeof(last_payload_), safe_payload);
+  core::copyText(last_payload_, sizeof(last_payload_), safe_payload);
   last_decode_ms_ = now_ms;
   last_match_ = decoder_valid && rules.matches(safe_payload);
   feedback_until_ms_ = now_ms + (last_match_ ? 1800U : 900U);
@@ -90,7 +79,7 @@ void QrSceneController::handleDecodedPayload(const char* payload,
   if (symbol_label != nullptr) {
     lv_label_set_text(symbol_label, last_match_ ? "WINNER" : "QR");
   }
-  copyTextSafe(pending_runtime_event_,
+  core::copyText(pending_runtime_event_,
                sizeof(pending_runtime_event_),
                last_match_ ? "QR_OK" : "QR_INVALID");
   pending_runtime_event_valid_ = true;
@@ -133,7 +122,7 @@ bool QrSceneController::consumeRuntimeEvent(char* out_event, size_t capacity) {
   if (out_event == nullptr || capacity == 0U || !pending_runtime_event_valid_) {
     return false;
   }
-  copyTextSafe(out_event, capacity, pending_runtime_event_);
+  core::copyText(out_event, capacity, pending_runtime_event_);
   pending_runtime_event_[0] = '\0';
   pending_runtime_event_valid_ = false;
   return true;
@@ -143,7 +132,7 @@ bool QrSceneController::queueSimulatedPayload(const char* payload) {
   if (payload == nullptr || payload[0] == '\0') {
     return false;
   }
-  copyTextSafe(simulated_payload_, sizeof(simulated_payload_), payload);
+  core::copyText(simulated_payload_, sizeof(simulated_payload_), payload);
   simulated_pending_ = true;
   return true;
 }

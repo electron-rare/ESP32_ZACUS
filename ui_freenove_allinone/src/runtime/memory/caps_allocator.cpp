@@ -1,27 +1,27 @@
 #include "runtime/memory/caps_allocator.h"
 
 #include <Arduino.h>
+#include <atomic>
+#include <cstdlib>
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #endif
-
-#include <cstdlib>
 
 namespace runtime {
 namespace memory {
 
 namespace {
 
-uint32_t g_alloc_failures = 0U;
+std::atomic<uint32_t> g_alloc_failures{0U};
 
 void noteAllocFailure(size_t bytes, const char* tag, const char* source) {
-  ++g_alloc_failures;
+  const uint32_t count = ++g_alloc_failures;
   Serial.printf("[MEM] alloc_fail source=%s bytes=%u tag=%s fail_count=%lu\n",
                 source,
                 static_cast<unsigned int>(bytes),
                 (tag != nullptr) ? tag : "n/a",
-                static_cast<unsigned long>(g_alloc_failures));
+                static_cast<unsigned long>(count));
 }
 
 }  // namespace
@@ -167,7 +167,7 @@ void CapsAllocator::release(void* ptr) {
 }
 
 uint32_t CapsAllocator::failureCount() {
-  return g_alloc_failures;
+  return g_alloc_failures.load();
 }
 
 }  // namespace memory

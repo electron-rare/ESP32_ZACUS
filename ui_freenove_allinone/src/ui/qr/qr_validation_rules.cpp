@@ -5,21 +5,10 @@
 #include <cctype>
 #include <cstring>
 #include <strings.h>
+#include "core/str_utils.h"
 
 namespace ui {
 namespace {
-
-void copyTextSafe(char* out, size_t out_size, const char* value) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (value == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, value, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
 
 bool startsWithCaseInsensitive(const char* value, const char* prefix) {
   if (value == nullptr || prefix == nullptr) {
@@ -194,18 +183,18 @@ void QrValidationRules::configureFromPayload(JsonVariantConst root) {
       if (value[0] == '\0' || expected_count_ >= kExpectedMax) {
         continue;
       }
-      copyTextSafe(expected_values_[expected_count_], sizeof(expected_values_[0]), value);
+      core::copyText(expected_values_[expected_count_], sizeof(expected_values_[0]), value);
       ++expected_count_;
     }
   } else {
     const char* expected = qr["expected"] | "";
     if (expected[0] != '\0') {
-      copyTextSafe(expected_values_[0], sizeof(expected_values_[0]), expected);
+      core::copyText(expected_values_[0], sizeof(expected_values_[0]), expected);
       expected_count_ = 1U;
     }
   }
-  copyTextSafe(prefix_, sizeof(prefix_), qr["prefix"] | "");
-  copyTextSafe(contains_, sizeof(contains_), qr["contains"] | "");
+  core::copyText(prefix_, sizeof(prefix_), qr["prefix"] | "");
+  core::copyText(contains_, sizeof(contains_), qr["contains"] | "");
 }
 
 bool QrValidationRules::matches(const char* payload) const {
@@ -213,7 +202,7 @@ bool QrValidationRules::matches(const char* payload) const {
     return false;
   }
   char buffer[192] = {0};
-  copyTextSafe(buffer, sizeof(buffer), payload);
+  core::copyText(buffer, sizeof(buffer), payload);
   trimAsciiWhitespaceInPlace(buffer);
   if (buffer[0] == '\0') {
     return false;
@@ -234,7 +223,7 @@ bool QrValidationRules::matches(const char* payload) const {
       return false;
     }
     char crc_buffer[192] = {0};
-    copyTextSafe(crc_buffer, sizeof(crc_buffer), buffer);
+    core::copyText(crc_buffer, sizeof(crc_buffer), buffer);
     if (case_insensitive_) {
       asciiUpperInPlace(crc_buffer);
     }

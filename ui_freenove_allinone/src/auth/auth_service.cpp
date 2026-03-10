@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <esp_random.h>
 
+#include "core/str_utils.h"
+
 namespace AuthService {
 
 namespace {
@@ -204,8 +206,7 @@ AuthStatus validateBearerToken(const char* auth_header) {
 
   // Copy to buffer and trim whitespace
   char token_copy[kTokenBufferSize];
-  std::strncpy(token_copy, provided_token, sizeof(token_copy) - 1);
-  token_copy[sizeof(token_copy) - 1] = '\0';
+  core::copyText(token_copy, sizeof(token_copy), provided_token);
 
   // Trim trailing whitespace (newlines, spaces, etc)
   size_t len = std::strlen(token_copy);
@@ -230,8 +231,7 @@ bool getCurrentToken(char* out_token_buffer, size_t buffer_size) {
   if (!out_token_buffer || buffer_size < kTokenBufferSize || !g_initialized) {
     return false;
   }
-  std::strncpy(out_token_buffer, g_current_token, buffer_size - 1);
-  out_token_buffer[buffer_size - 1] = '\0';
+  core::copyText(out_token_buffer, buffer_size, g_current_token);
   return true;
 }
 
@@ -251,12 +251,10 @@ bool rotateToken(char* out_new_token_buffer, size_t buffer_size) {
   }
 
   // Update global state
-  std::strncpy(g_current_token, new_token, sizeof(g_current_token) - 1);
-  g_current_token[sizeof(g_current_token) - 1] = '\0';
+  core::copyText(g_current_token, sizeof(g_current_token), new_token);
 
   // Return new token to caller
-  std::strncpy(out_new_token_buffer, new_token, buffer_size - 1);
-  out_new_token_buffer[buffer_size - 1] = '\0';
+  core::copyText(out_new_token_buffer, buffer_size, new_token);
 
   Serial.printf("%s rotated - new token=%s\n", kLogTag, new_token);
   return true;
@@ -280,8 +278,7 @@ bool reset() {
   }
 
   // Update global
-  std::strncpy(g_current_token, new_token, sizeof(g_current_token) - 1);
-  g_current_token[sizeof(g_current_token) - 1] = '\0';
+  core::copyText(g_current_token, sizeof(g_current_token), new_token);
 
   Serial.printf("%s reset - new token=%s\n", kLogTag, new_token);
   return true;

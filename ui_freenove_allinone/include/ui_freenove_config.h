@@ -1,8 +1,9 @@
 #pragma once
 
-// Freenove Media Kit reference profile (Sketch_19):
-// - FNK0102H ST7796 320x480 by default, rotation 1
-// - Buttons via analog ladder on GPIO19
+// Freenove FNK0102H release profile:
+// - Freenove ESP32-S3 WROOM N8R8 (8MB flash / 8MB PSRAM)
+// - ST7796 320x480, rotation 1
+// - 5-way switch via analog ladder on GPIO19
 // - I2S output BCLK=42, WS=41, DOUT=1
 
 #ifndef FREENOVE_LCD_VARIANT_FNK0102A
@@ -135,6 +136,9 @@
 #define FREENOVE_HAS_TOUCH 0
 #endif
 
+// Official release profile uses the 5-way switch only.
+// The experimental touch wiring overlaps with the camera mapping on FNK0102H,
+// so release builds keep touch disabled.
 #if FREENOVE_HAS_TOUCH
 #define FREENOVE_TOUCH_CS 9
 #define FREENOVE_TOUCH_IRQ 15
@@ -221,7 +225,7 @@
 #define FREENOVE_BAT_CHARGE_PIN -1
 #endif
 
-// Camera wiring from Freenove FNK0102 (ESP32S3_EYE profile).
+// Camera wiring validated for the FNK0102H release profile.
 #ifndef FREENOVE_CAM_ENABLE
 #define FREENOVE_CAM_ENABLE 1
 #endif

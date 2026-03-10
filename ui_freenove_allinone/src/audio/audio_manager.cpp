@@ -22,11 +22,19 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#if __has_include(<esp_heap_caps.h>)
+#include <esp_heap_caps.h>
+#define ZACUS_HAS_AUDIO_HEAP_CAPS 1
+#else
+#define ZACUS_HAS_AUDIO_HEAP_CAPS 0
+#endif
+#else
+#define ZACUS_HAS_AUDIO_HEAP_CAPS 0
 #endif
 
 namespace {
 
-constexpr char kDiagnosticTrackPath[] = "/music/boot_radio.mp3";
+constexpr char kDiagnosticTrackPath[] = "/apps/audio_player/audio/default.mp3";
 constexpr uint8_t kMaxTrackPathLen = 120U;
 constexpr uint16_t kBitrateScanBytes = 4096U;
 constexpr uint8_t kAudioDoneQueueDepth = 6U;
@@ -39,6 +47,8 @@ constexpr uint16_t kAudioPumpIdleDelayMs = 4U;
 constexpr uint16_t kAudioStateLockTimeoutMs = 20U;
 constexpr uint32_t kAudioUnderrunThresholdBytes = 768U;
 constexpr uint32_t kAudioUnderrunCooldownMs = 250U;
+constexpr size_t kAudioMinLargestDmaBlockBytes = 20000U;
+constexpr uint32_t kAudioRestoreRetryDelayMs = 2500U;
 
 struct AudioPinProfile {
   int bck;
@@ -109,6 +119,28 @@ bool resolveFileSystem(bool use_sd, fs::FS*& out_fs, const char*& out_label) {
   return true;
 #else
   return false;
+#endif
+}
+
+bool hasAudioDmaBudget(size_t* out_largest_dma, size_t* out_free_dma) {
+#if ZACUS_HAS_AUDIO_HEAP_CAPS
+  const size_t largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+  const size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
+  if (out_largest_dma != nullptr) {
+    *out_largest_dma = largest_dma;
+  }
+  if (out_free_dma != nullptr) {
+    *out_free_dma = free_dma;
+  }
+  return largest_dma >= kAudioMinLargestDmaBlockBytes;
+#else
+  if (out_largest_dma != nullptr) {
+    *out_largest_dma = 0U;
+  }
+  if (out_free_dma != nullptr) {
+    *out_free_dma = 0U;
+  }
+  return true;
 #endif
 }
 
@@ -416,6 +448,15 @@ bool AudioManager::ensurePlayer() {
     Serial.println("[AUDIO] player disabled: PSRAM not detected");
     return false;
   }
+  size_t largest_dma = 0U;
+  size_t free_dma = 0U;
+  if (!hasAudioDmaBudget(&largest_dma, &free_dma)) {
+    Serial.printf("[AUDIO] player deferred: largest_dma=%lu free_dma=%lu need>=%lu\n",
+                  static_cast<unsigned long>(largest_dma),
+                  static_cast<unsigned long>(free_dma),
+                  static_cast<unsigned long>(kAudioMinLargestDmaBlockBytes));
+    return false;
+  }
   player_ = std::unique_ptr<Audio>(new Audio());
   if (!player_) {
     Serial.println("[AUDIO] alloc failed for ESP32-audioI2S player");
@@ -442,6 +483,8 @@ bool AudioManager::begin() {
     return false;
   }
   begun_ = true;
+  restore_pending_ = false;
+  restore_retry_not_before_ms_ = 0U;
   g_audio_manager_instance = this;
   pump_task_enabled_ = startAudioPump();
   Serial.printf("[AUDIO] backend=ESP32-audioI2S profile=%u:%s fx=%u:%s vol=%u\n",
@@ -664,6 +707,14 @@ bool AudioManager::requestPlay(const char* filename, bool diagnostic_tone) {
   }
   last_stream_url_.remove(0);
 
+  if (!begun_) {
+    (void)restoreOutputResources();
+    if (!begun_) {
+      Serial.println("[AUDIO] play request denied: backend unavailable");
+      return false;
+    }
+  }
+
   AudioCodec codec = AudioCodec::kUnknown;
   uint16_t bitrate_kbps = 0U;
   detectTrackCodecAndBitrate(normalized_path, use_sd, codec, bitrate_kbps);
@@ -711,6 +762,13 @@ bool AudioManager::play(const char* filename) {
 bool AudioManager::requestPlayUrl(const char* url) {
   if (url == nullptr || url[0] == '\0') {
     return false;
+  }
+  if (!begun_) {
+    (void)restoreOutputResources();
+    if (!begun_) {
+      Serial.println("[AUDIO] stream request denied: backend unavailable");
+      return false;
+    }
   }
   if (!takeStateLock(kAudioStateLockTimeoutMs)) {
     return false;
@@ -788,6 +846,60 @@ void AudioManager::stop() {
   releaseStateLock();
 }
 
+void AudioManager::releaseOutputResources() {
+  stopAudioPump();
+  if (!takeStateLock(kAudioStateLockTimeoutMs)) {
+    Serial.println("[AUDIO] release lock timeout");
+    return;
+  }
+  pending_start_ = false;
+  pending_track_.remove(0);
+  pending_diagnostic_tone_ = false;
+  last_stream_url_.remove(0);
+  if (player_ != nullptr) {
+    player_->stopSong();
+  }
+  clearTrackState();
+  player_.reset();
+  begun_ = false;
+#if defined(ARDUINO_ARCH_ESP32)
+  if (rtos_state_ != nullptr && rtos_state_->done_queue != nullptr) {
+    xQueueReset(rtos_state_->done_queue);
+  }
+#endif
+  restore_pending_ = false;
+  restore_retry_not_before_ms_ = 0U;
+  releaseStateLock();
+  Serial.println("[AUDIO] backend released");
+}
+
+bool AudioManager::restoreOutputResources() {
+  if (begun_) {
+    restore_pending_ = false;
+    restore_retry_not_before_ms_ = 0U;
+    return true;
+  }
+  size_t largest_dma = 0U;
+  size_t free_dma = 0U;
+  if (!hasAudioDmaBudget(&largest_dma, &free_dma)) {
+    restore_pending_ = true;
+    restore_retry_not_before_ms_ = millis() + kAudioRestoreRetryDelayMs;
+    Serial.printf("[AUDIO] backend restore deferred largest_dma=%lu free_dma=%lu need>=%lu\n",
+                  static_cast<unsigned long>(largest_dma),
+                  static_cast<unsigned long>(free_dma),
+                  static_cast<unsigned long>(kAudioMinLargestDmaBlockBytes));
+    return false;
+  }
+  const bool ok = begin();
+  if (!ok) {
+    restore_pending_ = true;
+    restore_retry_not_before_ms_ = millis() + kAudioRestoreRetryDelayMs;
+    Serial.println("[AUDIO] backend restore failed");
+    return false;
+  }
+  return true;
+}
+
 void AudioManager::finishPlaybackAndNotify() {
   char finished_track[kAudioDoneTrackLen] = {0};
   if (!takeStateLock(kAudioStateLockTimeoutMs)) {
@@ -836,6 +948,12 @@ void AudioManager::processPendingPlaybackEvents() {
 
 void AudioManager::update() {
   if (!begun_) {
+    if (restore_pending_) {
+      const uint32_t now_ms = millis();
+      if (now_ms >= restore_retry_not_before_ms_) {
+        (void)restoreOutputResources();
+      }
+    }
     return;
   }
   bool finished_without_pump = false;

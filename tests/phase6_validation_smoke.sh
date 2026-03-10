@@ -3,14 +3,19 @@
 ###############################################################################
 # Phase 6: Hardware Validation Smoke Tests
 # Tests P1/P2 security hardening on live ESP32-S3 device
-# Port: /dev/cu.usbmodem5AB90753301 @ 115200 baud
+# Port: pass as argument or use ZACUS_SERIAL_PORT
 ###############################################################################
 
 set -e
 
-DEVICE_PORT="${1:-/dev/cu.usbmodem5AB90753301}"
+DEVICE_PORT="${1:-${ZACUS_SERIAL_PORT:-}}"
 BAUD_RATE="115200"
 TEST_LOG="/tmp/phase6_test_results.log"
+
+if [ -z "$DEVICE_PORT" ]; then
+    echo "Usage: $0 <PORT> or set ZACUS_SERIAL_PORT" >&2
+    exit 1
+fi
 
 # Colors
 RED='\033[0;31m'

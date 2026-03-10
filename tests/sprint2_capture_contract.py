@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -100,11 +101,15 @@ class SerialRunner:
         self.ser: Optional[serial.Serial] = None
 
     def __enter__(self) -> "SerialRunner":
-        self.ser = serial.Serial(self.port, self.baud, timeout=self.timeout)
+        self.ser = serial.Serial()
+        self.ser.port = self.port
+        self.ser.baudrate = self.baud
+        self.ser.timeout = self.timeout
+        self.ser.write_timeout = 1.0
         self.ser.dtr = False
         self.ser.rts = False
-        time.sleep(0.8)
-        self.ser.reset_input_buffer()
+        self.ser.open()
+        time.sleep(0.25)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -127,7 +132,7 @@ class SerialRunner:
             time.sleep(0.03)
         return "".join(chunks)
 
-    def wait_for_boot_settle(self, timeout_s: float = 60.0, quiet_s: float = 3.5) -> None:
+    def wait_for_boot_settle(self, timeout_s: float = 60.0, quiet_s: float = 2.5) -> None:
         if self.ser is None:
             raise RuntimeError("serial connection closed")
         deadline = time.time() + timeout_s
@@ -145,14 +150,14 @@ class SerialRunner:
         self.wait_for_boot_settle()
         last_raw = ""
         for _ in range(retries):
-            raw = self.send("PING", wait_s=1.6)
+            raw = self.send("PING", wait_s=2.2)
             if "PONG" in raw:
                 return
             if "UNKNOWN PING" in raw:
                 # Command path is active even if PING isn't mapped as expected.
                 return
             last_raw = raw
-            time.sleep(0.25)
+            time.sleep(0.4)
         raise RuntimeError(
             "serial command channel unavailable after PING retries "
             f"(port={self.port}). Last output:\n{last_raw}"
@@ -232,7 +237,7 @@ def run_serial_cycles(port: str, baud: int, timeout: float, cycles: int) -> None
         runner.wait_for_command_channel()
         for app_id in APPS:
             for cycle in range(1, cycles + 1):
-                open_out = runner.send(f"APP_OPEN {app_id} sprint2", wait_s=0.9)
+                open_out = runner.send(f"APP_OPEN {app_id} sprint2", wait_s=2.4)
                 if "ACK APP_OPEN ok=1" not in open_out:
                     fallback = runner.status()
                     if fallback.state not in ("running", "starting") or (
@@ -329,12 +334,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sprint 2 capture contract + endurance checks.")
     parser.add_argument("--mode", choices=("serial", "http"), default="serial")
     parser.add_argument("--cycles", type=int, default=10)
-    parser.add_argument("--port", default="/dev/cu.usbmodem5AB90753301")
+    parser.add_argument("--port", default=os.environ.get("ZACUS_SERIAL_PORT", ""))
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=2.0)
-    parser.add_argument("--base-url", default="http://192.168.4.1")
-    parser.add_argument("--token", default="")
+    parser.add_argument("--base-url", default=os.environ.get("ZACUS_BASE_URL", "http://192.168.4.1"))
+    parser.add_argument("--token", default=os.environ.get("ZACUS_WEB_TOKEN", ""))
     args = parser.parse_args()
+    if args.mode == "serial" and not args.port:
+        parser.error("--port or ZACUS_SERIAL_PORT is required in serial mode")
 
     started = time.time()
     try:

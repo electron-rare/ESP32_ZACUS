@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "ui_freenove_config.h"
+#include "core/str_utils.h"
 
 #if defined(ARDUINO_ARCH_ESP32) && __has_include(<esp_camera.h>) && FREENOVE_CAM_ENABLE
 #include <esp_camera.h>
@@ -17,19 +18,14 @@
 #define ZACUS_HAS_CAMERA 0
 #endif
 
-namespace {
+#if defined(ARDUINO_ARCH_ESP32) && __has_include(<esp_heap_caps.h>)
+#include <esp_heap_caps.h>
+#define ZACUS_HAS_HEAP_CAPS 1
+#else
+#define ZACUS_HAS_HEAP_CAPS 0
+#endif
 
-void copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
+namespace {
 
 String normalizeDir(const char* dir) {
   if (dir == nullptr || dir[0] == '\0') {
@@ -235,7 +231,7 @@ CameraManager::CameraManager() {
 
 bool CameraManager::begin(const Config& config) {
   config_ = config;
-  copyText(config_.snapshot_dir, sizeof(config_.snapshot_dir), normalizeDir(config.snapshot_dir).c_str());
+  core::copyText(config_.snapshot_dir, sizeof(config_.snapshot_dir), normalizeDir(config.snapshot_dir).c_str());
   if (config_.jpeg_quality < 4U) {
     config_.jpeg_quality = 4U;
   }
@@ -257,8 +253,8 @@ bool CameraManager::begin(const Config& config) {
   snapshot_.jpeg_quality = config_.jpeg_quality;
   snapshot_.fb_count = config_.fb_count;
   snapshot_.xclk_hz = config_.xclk_hz;
-  copyText(snapshot_.frame_size, sizeof(snapshot_.frame_size), config_.frame_size);
-  copyText(snapshot_.snapshot_dir, sizeof(snapshot_.snapshot_dir), config_.snapshot_dir);
+  core::copyText(snapshot_.frame_size, sizeof(snapshot_.frame_size), config_.frame_size);
+  core::copyText(snapshot_.snapshot_dir, sizeof(snapshot_.snapshot_dir), config_.snapshot_dir);
   recorder_mode_ = false;
   recorder_frozen_ = false;
   recorder_frozen_fb_ = nullptr;
@@ -273,8 +269,8 @@ bool CameraManager::begin(const Config& config) {
 
 bool CameraManager::ensureSnapshotDir() {
   const String dir = normalizeDir(config_.snapshot_dir);
-  copyText(config_.snapshot_dir, sizeof(config_.snapshot_dir), dir.c_str());
-  copyText(snapshot_.snapshot_dir, sizeof(snapshot_.snapshot_dir), dir.c_str());
+  core::copyText(config_.snapshot_dir, sizeof(config_.snapshot_dir), dir.c_str());
+  core::copyText(snapshot_.snapshot_dir, sizeof(snapshot_.snapshot_dir), dir.c_str());
   if (LittleFS.exists(dir.c_str())) {
     return true;
   }
@@ -312,7 +308,7 @@ bool CameraManager::initCameraForMode(bool recorder_mode) {
     snapshot_.initialized = false;
   }
 
-  camera_config_t cfg = {};
+	  camera_config_t cfg = {};
   cfg.ledc_channel = LEDC_CHANNEL_0;
   cfg.ledc_timer = LEDC_TIMER_0;
   cfg.pin_d0 = FREENOVE_CAM_Y2;
@@ -331,39 +327,50 @@ bool CameraManager::initCameraForMode(bool recorder_mode) {
   cfg.pin_sccb_scl = FREENOVE_CAM_SIOC;
   cfg.pin_pwdn = FREENOVE_CAM_PWDN;
   cfg.pin_reset = FREENOVE_CAM_RESET;
-  cfg.xclk_freq_hz = config_.xclk_hz;
-  cfg.fb_count = recorder_mode ? 1U : config_.fb_count;
+	  cfg.xclk_freq_hz = config_.xclk_hz;
+	  cfg.fb_count = recorder_mode ? 1U : config_.fb_count;
+#if ZACUS_HAS_HEAP_CAPS
+  const uint32_t largest_dma_block = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+#else
+  const uint32_t largest_dma_block = 0U;
+#endif
+  const bool low_dma_budget = (largest_dma_block > 0U) && (largest_dma_block < 20000U);
 #if defined(CAMERA_GRAB_LATEST)
-  cfg.grab_mode = CAMERA_GRAB_LATEST;
+	  cfg.grab_mode = CAMERA_GRAB_LATEST;
 #endif
 #if defined(CAMERA_FB_IN_PSRAM) && (UI_CAMERA_FB_IN_PSRAM != 0)
   cfg.fb_location = CAMERA_FB_IN_PSRAM;
 #endif
 
-  if (recorder_mode) {
-    cfg.pixel_format = PIXFORMAT_RGB565;
-    // Keep recorder mode at a lower camera footprint to avoid DMA alloc failures
-    // when UI/FX buffers are active.
-    cfg.frame_size = FRAMESIZE_QQVGA;
-    cfg.jpeg_quality = 12U;
-  } else {
-    cfg.pixel_format = PIXFORMAT_JPEG;
-    cfg.frame_size = frameSizeFromText(config_.frame_size);
-    cfg.jpeg_quality = config_.jpeg_quality;
-  }
+	  if (recorder_mode) {
+	    cfg.pixel_format = PIXFORMAT_RGB565;
+	    // Keep recorder mode at a lower camera footprint to avoid DMA alloc failures
+	    // when UI/FX buffers are active.
+	    cfg.frame_size = FRAMESIZE_QQVGA;
+	    cfg.jpeg_quality = 12U;
+	  } else {
+	    cfg.pixel_format = PIXFORMAT_JPEG;
+	    cfg.frame_size = low_dma_budget ? FRAMESIZE_QQVGA : frameSizeFromText(config_.frame_size);
+	    cfg.jpeg_quality = low_dma_budget ? std::max<uint8_t>(config_.jpeg_quality, 20U) : config_.jpeg_quality;
+	    if (low_dma_budget) {
+	      cfg.fb_count = 1U;
+	      Serial.printf("[CAM] low-dma capture profile largest_dma=%lu frame=QQVGA fb=1\n",
+	                    static_cast<unsigned long>(largest_dma_block));
+	    }
+	  }
 
   esp_err_t status = esp_camera_init(&cfg);
   if (status != ESP_OK) {
     Serial.printf("[CAM] init failed mode=%s err=0x%x\n", recorder_mode ? "recorder" : "default", static_cast<unsigned int>(status));
     camera_config_t fallback = cfg;
-    if (recorder_mode) {
-      fallback.frame_size = FRAMESIZE_QQVGA;
-      fallback.fb_count = 1U;
-    } else {
-      fallback.frame_size = FRAMESIZE_QVGA;
-      fallback.jpeg_quality = (fallback.jpeg_quality < 20U) ? 20U : fallback.jpeg_quality;
-      fallback.fb_count = 1U;
-    }
+	    if (recorder_mode) {
+	      fallback.frame_size = FRAMESIZE_QQVGA;
+	      fallback.fb_count = 1U;
+	    } else {
+	      fallback.frame_size = low_dma_budget ? FRAMESIZE_QQVGA : FRAMESIZE_QVGA;
+	      fallback.jpeg_quality = (fallback.jpeg_quality < 20U) ? 20U : fallback.jpeg_quality;
+	      fallback.fb_count = 1U;
+	    }
 #if defined(CAMERA_FB_IN_DRAM)
     fallback.fb_location = CAMERA_FB_IN_DRAM;
 #endif
@@ -386,7 +393,7 @@ bool CameraManager::initCameraForMode(bool recorder_mode) {
   snapshot_.initialized = true;
   snapshot_.jpeg_quality = static_cast<uint8_t>(cfg.jpeg_quality);
   snapshot_.fb_count = static_cast<uint8_t>(cfg.fb_count);
-  copyText(snapshot_.frame_size, sizeof(snapshot_.frame_size), frameSizeToText(cfg.frame_size));
+  core::copyText(snapshot_.frame_size, sizeof(snapshot_.frame_size), frameSizeToText(cfg.frame_size));
   snapshot_.width = frameSizeWidth(cfg.frame_size);
   snapshot_.height = frameSizeHeight(cfg.frame_size);
   recorder_mode_ = recorder_mode;
@@ -665,7 +672,7 @@ bool CameraManager::snapshotToFile(const char* filename_hint, String* out_path) 
   ++snapshot_.capture_count;
   snapshot_.width = frame->width;
   snapshot_.height = frame->height;
-  copyText(snapshot_.last_file, sizeof(snapshot_.last_file), path.c_str());
+  core::copyText(snapshot_.last_file, sizeof(snapshot_.last_file), path.c_str());
   clearLastError();
   if (out_path != nullptr) {
     *out_path = path;
@@ -889,8 +896,8 @@ bool CameraManager::recorderSaveFrozen(String* out_path, RecorderSaveFormat form
   snapshot_.last_snapshot_ok = true;
   snapshot_.last_capture_ms = millis();
   ++snapshot_.capture_count;
-  copyText(snapshot_.last_file, sizeof(snapshot_.last_file), path.c_str());
-  copyText(snapshot_.recorder_selected_file, sizeof(snapshot_.recorder_selected_file), path.c_str());
+  core::copyText(snapshot_.last_file, sizeof(snapshot_.last_file), path.c_str());
+  core::copyText(snapshot_.recorder_selected_file, sizeof(snapshot_.recorder_selected_file), path.c_str());
   clearLastError();
   if (out_path != nullptr) {
     *out_path = path;
@@ -985,7 +992,7 @@ CameraManager::Snapshot CameraManager::snapshot() const {
 }
 
 void CameraManager::setLastError(const char* message) {
-  copyText(snapshot_.last_error, sizeof(snapshot_.last_error), message);
+  core::copyText(snapshot_.last_error, sizeof(snapshot_.last_error), message);
 }
 
 void CameraManager::clearLastError() {

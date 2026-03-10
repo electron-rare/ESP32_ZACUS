@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include "core/str_utils.h"
 
 #include "audio_manager.h"
 #include "camera_manager.h"
@@ -26,37 +27,28 @@
 namespace app::modules {
 namespace {
 
-void copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
+constexpr const char* kSharedBundledAudioTrack = "/apps/audio_player/audio/default.mp3";
 
-bool equalsIgnoreCase(const char* lhs, const char* rhs) {
-  if (lhs == nullptr || rhs == nullptr) {
-    return false;
+const char* defaultBundledAudioForApp(const char* app_id) {
+  if (app_id == nullptr || app_id[0] == '\0') {
+    return kSharedBundledAudioTrack;
   }
-  for (size_t i = 0U;; ++i) {
-    const char a = lhs[i];
-    const char b = rhs[i];
-    if (a == '\0' && b == '\0') {
-      return true;
-    }
-    if (a == '\0' || b == '\0') {
-      return false;
-    }
-    const char la = (a >= 'A' && a <= 'Z') ? static_cast<char>(a - 'A' + 'a') : a;
-    const char lb = (b >= 'A' && b <= 'Z') ? static_cast<char>(b - 'A' + 'a') : b;
-    if (la != lb) {
-      return false;
-    }
+  if (core::equalsIgnoreCase(app_id, "audio_player")) {
+    return "/apps/audio_player/audio/default.mp3";
   }
+  if (core::equalsIgnoreCase(app_id, "audiobook_player")) {
+    return "/apps/audiobook_player/audio/default.mp3";
+  }
+  if (core::equalsIgnoreCase(app_id, "kids_music")) {
+    return "/apps/kids_music/audio/default.mp3";
+  }
+  if (core::equalsIgnoreCase(app_id, "kids_webradio")) {
+    return "/apps/kids_webradio/audio/default.mp3";
+  }
+  if (core::equalsIgnoreCase(app_id, "kids_podcast")) {
+    return "/apps/kids_podcast/audio/default.mp3";
+  }
+  return kSharedBundledAudioTrack;
 }
 
 bool ensureDir(const char* path) {
@@ -142,14 +134,14 @@ bool endsWithIgnoreCase(const char* text, const char* suffix) {
     return false;
   }
   const char* tail = text + (text_len - suffix_len);
-  return equalsIgnoreCase(tail, suffix);
+  return core::equalsIgnoreCase(tail, suffix);
 }
 
 bool parseJsonPayload(const AppAction& action, DynamicJsonDocument* out) {
   if (out == nullptr) {
     return false;
   }
-  const bool looks_json = (action.content_type[0] != '\0' && equalsIgnoreCase(action.content_type, "application/json")) ||
+  const bool looks_json = (action.content_type[0] != '\0' && core::equalsIgnoreCase(action.content_type, "application/json")) ||
                           action.payload[0] == '{' || action.payload[0] == '[';
   if (!looks_json || action.payload[0] == '\0') {
     return false;
@@ -164,11 +156,11 @@ class ModuleBase : public IAppModule {
     context_ = context;
     status_ = {};
     if (context.descriptor != nullptr) {
-      copyText(status_.id, sizeof(status_.id), context.descriptor->id);
+      core::copyText(status_.id, sizeof(status_.id), context.descriptor->id);
     }
     status_.state = AppRuntimeState::kRunning;
     status_.started_at_ms = millis();
-    copyText(status_.last_event, sizeof(status_.last_event), "begin");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "begin");
     return context.descriptor != nullptr;
   }
 
@@ -178,12 +170,12 @@ class ModuleBase : public IAppModule {
   }
 
   void handleAction(const AppAction& action) override {
-    copyText(status_.last_event, sizeof(status_.last_event), action.name);
+    core::copyText(status_.last_event, sizeof(status_.last_event), action.name);
   }
 
   void end() override {
     status_.state = AppRuntimeState::kIdle;
-    copyText(status_.last_event, sizeof(status_.last_event), "end");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "end");
   }
 
   AppRuntimeStatus status() const override {
@@ -192,7 +184,7 @@ class ModuleBase : public IAppModule {
 
  protected:
   void setError(const char* error) {
-    copyText(status_.last_error, sizeof(status_.last_error), error);
+    core::copyText(status_.last_error, sizeof(status_.last_error), error);
   }
 
   AppContext context_ = {};
@@ -215,8 +207,10 @@ class AudioPlayerModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "play")) {
-      const char* path = (action.payload[0] != '\0') ? action.payload : "/music/boot_radio.mp3";
+    if (core::equalsIgnoreCase(action.name, "play")) {
+      const char* path = (action.payload[0] != '\0')
+                             ? action.payload
+                             : defaultBundledAudioForApp((context_.descriptor != nullptr) ? context_.descriptor->id : nullptr);
       if (context_.storage != nullptr && !context_.storage->fileExists(path)) {
         setError("missing_asset");
         return;
@@ -229,7 +223,7 @@ class AudioPlayerModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "play_url")) {
+    if (core::equalsIgnoreCase(action.name, "play_url")) {
       if (action.payload[0] == '\0') {
         setError("missing_asset");
         return;
@@ -243,7 +237,7 @@ class AudioPlayerModule : public ModuleBase {
           return;
         }
       }
-      if (!context_.audio->playUrl(action.payload)) {
+      if (!context_.audio->play(action.payload)) {
         if (!playOfflineFallback()) {
           setError("network_unavailable");
         }
@@ -253,7 +247,7 @@ class AudioPlayerModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "pause")) {
+    if (core::equalsIgnoreCase(action.name, "pause")) {
       if (!paused_url_.isEmpty()) {
         context_.audio->stop();
       } else {
@@ -262,10 +256,10 @@ class AudioPlayerModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "resume")) {
+    if (core::equalsIgnoreCase(action.name, "resume")) {
       bool ok = false;
       if (!paused_url_.isEmpty()) {
-        ok = context_.audio->playUrl(paused_url_.c_str());
+        ok = context_.audio->play(paused_url_.c_str());
       } else if (!paused_track_.isEmpty()) {
         ok = context_.media->play(paused_track_.c_str(), context_.audio);
       }
@@ -274,17 +268,17 @@ class AudioPlayerModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "stop")) {
+    if (core::equalsIgnoreCase(action.name, "stop")) {
       context_.media->stop(context_.audio);
       return;
     }
-    if (equalsIgnoreCase(action.name, "set_volume")) {
+    if (core::equalsIgnoreCase(action.name, "set_volume")) {
       const uint32_t volume = parseUint(action.payload, context_.audio->volume());
       context_.audio->setVolume(static_cast<uint8_t>(volume > 100U ? 100U : volume));
       return;
     }
-    if (equalsIgnoreCase(action.name, "next") || equalsIgnoreCase(action.name, "prev")) {
-      copyText(status_.last_event, sizeof(status_.last_event), "playlist_not_configured");
+    if (core::equalsIgnoreCase(action.name, "next") || core::equalsIgnoreCase(action.name, "prev")) {
+      core::copyText(status_.last_event, sizeof(status_.last_event), "playlist_not_configured");
       return;
     }
   }
@@ -298,13 +292,13 @@ class AudioPlayerModule : public ModuleBase {
     String candidates[3];
     candidates[0] = String("/apps/") + app_id + "/audio/offline.mp3";
     candidates[1] = String("/apps/") + app_id + "/audio/default.mp3";
-    candidates[2] = "/music/boot_radio.mp3";
+    candidates[2] = kSharedBundledAudioTrack;
     for (const String& candidate : candidates) {
       if (!context_.storage->fileExists(candidate.c_str())) {
         continue;
       }
       if (context_.media->play(candidate.c_str(), context_.audio)) {
-        copyText(status_.last_event, sizeof(status_.last_event), "offline_fallback");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "offline_fallback");
         setError("");
         return true;
       }
@@ -333,12 +327,12 @@ class AudiobookModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "open_book")) {
+    if (core::equalsIgnoreCase(action.name, "open_book")) {
       current_book_ = action.payload;
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "play")) {
+    if (core::equalsIgnoreCase(action.name, "play")) {
       const char* target = current_book_.isEmpty() ? action.payload : current_book_.c_str();
       if (target == nullptr || target[0] == '\0') {
         setError("missing_asset");
@@ -352,7 +346,7 @@ class AudiobookModule : public ModuleBase {
             return;
           }
         }
-        if (!context_.audio->playUrl(target)) {
+        if (!context_.audio->play(target)) {
           setError("network_unavailable");
         }
         return;
@@ -366,27 +360,27 @@ class AudiobookModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "pause")) {
+    if (core::equalsIgnoreCase(action.name, "pause")) {
       context_.audio->stop();
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "stop")) {
+    if (core::equalsIgnoreCase(action.name, "stop")) {
       context_.media->stop(context_.audio);
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "seek_ms")) {
+    if (core::equalsIgnoreCase(action.name, "seek_ms")) {
       position_ms_ = parseUint(action.payload, position_ms_);
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "bookmark_set")) {
+    if (core::equalsIgnoreCase(action.name, "bookmark_set")) {
       bookmark_ms_ = parseUint(action.payload, position_ms_);
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "bookmark_go")) {
+    if (core::equalsIgnoreCase(action.name, "bookmark_go")) {
       position_ms_ = bookmark_ms_;
       saveProgress();
       return;
@@ -445,15 +439,23 @@ class CameraVideoModule : public ModuleBase {
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
-    if (!context.camera->startRecorderSession()) {
+    bool camera_ready = context.camera->startRecorderSession();
+    preview_on_ = camera_ready;
+    if (!camera_ready) {
+      camera_ready = context.camera->start();
+      preview_on_ = false;
+    }
+    if (!camera_ready) {
       setError("camera_start_failed");
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
-    preview_on_ = true;
     clip_active_ = false;
     clip_frames_.clear();
     setError("");
+    core::copyText(status_.last_event,
+                   sizeof(status_.last_event),
+                   preview_on_ ? "preview_ready" : "snapshot_ready");
     updateStatusEvent();
     return true;
   }
@@ -479,11 +481,11 @@ class CameraVideoModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "preview_on")) {
+    if (core::equalsIgnoreCase(action.name, "preview_on")) {
       if (!context_.camera->start()) {
         setError("preview_on_failed");
       } else {
@@ -493,26 +495,26 @@ class CameraVideoModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "preview_off")) {
+    if (core::equalsIgnoreCase(action.name, "preview_off")) {
       context_.camera->stop();
       preview_on_ = false;
       setError("");
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "snapshot")) {
+    if (core::equalsIgnoreCase(action.name, "snapshot")) {
       String out_path;
       if (!context_.camera->snapshotToFile(nullptr, &out_path)) {
         setError("snapshot_failed");
       } else {
         char event[40] = {0};
         std::snprintf(event, sizeof(event), "snap=%u", static_cast<unsigned int>(out_path.length()));
-        copyText(status_.last_event, sizeof(status_.last_event), event);
+        core::copyText(status_.last_event, sizeof(status_.last_event), event);
         setError("");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "clip_start")) {
+    if (core::equalsIgnoreCase(action.name, "clip_start")) {
       clip_active_ = true;
       clip_frames_.clear();
       clip_started_ms_ = millis();
@@ -521,13 +523,13 @@ class CameraVideoModule : public ModuleBase {
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "clip_stop")) {
+    if (core::equalsIgnoreCase(action.name, "clip_stop")) {
       stopClipAndPersist();
       setError("");
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "list_media")) {
+    if (core::equalsIgnoreCase(action.name, "list_media")) {
       static constexpr int kMaxListItems = 12;
       String items[kMaxListItems];
       const int count = context_.camera->recorderListPhotos(items, kMaxListItems, true);
@@ -536,17 +538,17 @@ class CameraVideoModule : public ModuleBase {
       } else {
         char event[40] = {0};
         std::snprintf(event, sizeof(event), "list=%d", count);
-        copyText(status_.last_event, sizeof(status_.last_event), event);
+        core::copyText(status_.last_event, sizeof(status_.last_event), event);
         setError("");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "delete_media")) {
+    if (core::equalsIgnoreCase(action.name, "delete_media")) {
       if (action.payload[0] == '\0' || !context_.camera->recorderRemoveFile(action.payload)) {
         setError("delete_media_failed");
       } else {
         setError("");
-        copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
       }
       return;
     }
@@ -598,7 +600,7 @@ class CameraVideoModule : public ModuleBase {
                   preview_on_ ? 1U : 0U,
                   clip_active_ ? 1U : 0U,
                   static_cast<unsigned int>(clip_frames_.size()));
-    copyText(status_.last_event, sizeof(status_.last_event), event);
+    core::copyText(status_.last_event, sizeof(status_.last_event), event);
   }
 
   bool preview_on_ = false;
@@ -623,7 +625,7 @@ class QrScannerModule : public ModuleBase {
     // Ensure CameraManager is not already holding the camera driver.
     context.camera->stop();
     scanning_ = false;
-    copyText(last_type_, sizeof(last_type_), "none");
+    core::copyText(last_type_, sizeof(last_type_), "none");
     setError("");
     updateStatusEvent();
     return true;
@@ -631,23 +633,23 @@ class QrScannerModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "scan_start")) {
+    if (core::equalsIgnoreCase(action.name, "scan_start")) {
       scanning_ = true;
       setError("");
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "scan_stop")) {
+    if (core::equalsIgnoreCase(action.name, "scan_stop")) {
       scanning_ = false;
       setError("");
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "scan_once") || equalsIgnoreCase(action.name, "scan_payload")) {
+    if (core::equalsIgnoreCase(action.name, "scan_once") || core::equalsIgnoreCase(action.name, "scan_payload")) {
       scanning_ = false;
       classifyPayload(action.payload);
       setError("");
@@ -664,18 +666,18 @@ class QrScannerModule : public ModuleBase {
  private:
   void classifyPayload(const char* payload) {
     if (payload == nullptr || payload[0] == '\0') {
-      copyText(last_type_, sizeof(last_type_), "unknown");
+      core::copyText(last_type_, sizeof(last_type_), "unknown");
       return;
     }
     if (std::strncmp(payload, "http://", 7U) == 0 || std::strncmp(payload, "https://", 8U) == 0) {
-      copyText(last_type_, sizeof(last_type_), "url");
+      core::copyText(last_type_, sizeof(last_type_), "url");
       return;
     }
     if (std::strncmp(payload, "app:", 4U) == 0 || std::strncmp(payload, "zacus:", 6U) == 0) {
-      copyText(last_type_, sizeof(last_type_), "app");
+      core::copyText(last_type_, sizeof(last_type_), "app");
       return;
     }
-    copyText(last_type_, sizeof(last_type_), "text");
+    core::copyText(last_type_, sizeof(last_type_), "text");
   }
 
   void updateStatusEvent() {
@@ -685,7 +687,7 @@ class QrScannerModule : public ModuleBase {
                   "scan=%u type=%s",
                   scanning_ ? 1U : 0U,
                   last_type_);
-    copyText(status_.last_event, sizeof(status_.last_event), event);
+    core::copyText(status_.last_event, sizeof(status_.last_event), event);
   }
 
   bool scanning_ = false;
@@ -710,51 +712,51 @@ class DictaphoneModule : public ModuleBase {
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "record_start")) {
+    if (core::equalsIgnoreCase(action.name, "record_start")) {
       const uint16_t sec = static_cast<uint16_t>(parseUint(action.payload, 30U));
       if (!context_.media->startRecording(sec, nullptr)) {
         setError("record_start_failed");
       } else {
         setError("");
-        copyText(status_.last_event, sizeof(status_.last_event), "recording=1");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "recording=1");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "record_stop")) {
+    if (core::equalsIgnoreCase(action.name, "record_stop")) {
       if (!context_.media->stopRecording()) {
         setError("record_stop_failed");
       } else {
         setError("");
-        copyText(status_.last_event, sizeof(status_.last_event), "recording=0");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "recording=0");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "play_file")) {
+    if (core::equalsIgnoreCase(action.name, "play_file")) {
       char path[120] = {0};
       if (!normalizeRecordPath(action.payload, path, sizeof(path)) ||
           !context_.media->play(path, context_.audio)) {
         setError("play_file_failed");
       } else {
         setError("");
-        copyText(status_.last_event, sizeof(status_.last_event), "play_ok");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "play_ok");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "delete_file")) {
+    if (core::equalsIgnoreCase(action.name, "delete_file")) {
       char path[120] = {0};
       if (!normalizeRecordPath(action.payload, path, sizeof(path)) || !LittleFS.remove(path)) {
         setError("delete_file_failed");
       } else {
         setError("");
-        copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
+        core::copyText(status_.last_event, sizeof(status_.last_event), "delete_ok");
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "list_records")) {
+    if (core::equalsIgnoreCase(action.name, "list_records")) {
       String list_json;
       if (!context_.media->listFiles("records", &list_json)) {
         setError("list_records_failed");
@@ -766,7 +768,7 @@ class DictaphoneModule : public ModuleBase {
         }
         char event[40] = {0};
         std::snprintf(event, sizeof(event), "records=%u", static_cast<unsigned int>(count));
-        copyText(status_.last_event, sizeof(status_.last_event), event);
+        core::copyText(status_.last_event, sizeof(status_.last_event), event);
         setError("");
       }
       return;
@@ -783,7 +785,7 @@ class DictaphoneModule : public ModuleBase {
 
  private:
   void updateStatusEvent() {
-    copyText(status_.last_event, sizeof(status_.last_event), "records=ready");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "records=ready");
   }
 
   bool normalizeRecordPath(const char* payload, char* out, size_t out_size) const {
@@ -791,12 +793,12 @@ class DictaphoneModule : public ModuleBase {
       return false;
     }
     if (payload[0] == '/') {
-      copyText(out, out_size, payload);
+      core::copyText(out, out_size, payload);
       return true;
     }
     char path[120] = {0};
     std::snprintf(path, sizeof(path), "/recorder/%s", payload);
-    copyText(out, out_size, path);
+    core::copyText(out, out_size, path);
     return true;
   }
 };
@@ -819,7 +821,7 @@ class TimerToolsModule : public ModuleBase {
     cd_done_notified_ = false;
     countdown_visual_until_ms_ = 0U;
     setError("");
-    copyText(status_.last_event, sizeof(status_.last_event), "timer_ready");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "timer_ready");
     return true;
   }
 
@@ -852,11 +854,11 @@ class TimerToolsModule : public ModuleBase {
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
     const uint32_t now_ms = millis();
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       writeStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "sw_start")) {
+    if (core::equalsIgnoreCase(action.name, "sw_start")) {
       if (!sw_running_) {
         sw_running_ = true;
         sw_started_ms_ = now_ms;
@@ -864,7 +866,7 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "sw_stop")) {
+    if (core::equalsIgnoreCase(action.name, "sw_stop")) {
       if (sw_running_) {
         sw_acc_ms_ += (now_ms - sw_started_ms_);
         sw_running_ = false;
@@ -872,12 +874,12 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "sw_lap")) {
+    if (core::equalsIgnoreCase(action.name, "sw_lap")) {
       sw_lap_ms_ = sw_running_ ? (sw_acc_ms_ + (now_ms - sw_started_ms_)) : sw_acc_ms_;
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "sw_reset")) {
+    if (core::equalsIgnoreCase(action.name, "sw_reset")) {
       sw_running_ = false;
       sw_started_ms_ = 0U;
       sw_acc_ms_ = 0U;
@@ -886,7 +888,7 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "cd_set")) {
+    if (core::equalsIgnoreCase(action.name, "cd_set")) {
       DynamicJsonDocument body(192);
       uint32_t seconds = 0U;
       if (parseJsonPayload(action, &body) && body["seconds"].is<uint32_t>()) {
@@ -901,7 +903,7 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "cd_start")) {
+    if (core::equalsIgnoreCase(action.name, "cd_start")) {
       if (cd_duration_ms_ == 0U) {
         cd_duration_ms_ = 60000U;
       }
@@ -911,7 +913,7 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "cd_pause")) {
+    if (core::equalsIgnoreCase(action.name, "cd_pause")) {
       if (cd_running_) {
         const uint32_t elapsed = now_ms - cd_started_ms_;
         cd_duration_ms_ = (elapsed >= cd_duration_ms_) ? 0U : (cd_duration_ms_ - elapsed);
@@ -921,7 +923,7 @@ class TimerToolsModule : public ModuleBase {
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "cd_reset")) {
+    if (core::equalsIgnoreCase(action.name, "cd_reset")) {
       cd_running_ = false;
       cd_duration_ms_ = 0U;
       cd_remaining_ms_ = 0U;
@@ -934,7 +936,7 @@ class TimerToolsModule : public ModuleBase {
 
  private:
   void notifyCountdownDone(uint32_t now_ms) {
-    copyText(status_.last_event, sizeof(status_.last_event), "countdown_done");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "countdown_done");
     setError("");
     if (context_.storage != nullptr && context_.audio != nullptr && context_.media != nullptr) {
       static constexpr const char* kDoneCandidates[] = {
@@ -964,7 +966,7 @@ class TimerToolsModule : public ModuleBase {
                   static_cast<unsigned long>(sw_elapsed_ms_),
                   static_cast<unsigned long>(cd_remaining_ms_),
                   cd_running_ ? 1U : 0U);
-    copyText(status_.last_event, sizeof(status_.last_event), event);
+    core::copyText(status_.last_event, sizeof(status_.last_event), event);
     setError("");
   }
 
@@ -998,17 +1000,17 @@ class FlashlightModule : public ModuleBase {
     is_on_ = false;
     level_ = 96U;
     setError("");
-    copyText(status_.last_event, sizeof(status_.last_event), "light_ready");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "light_ready");
     return true;
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "light_on")) {
+    if (core::equalsIgnoreCase(action.name, "light_on")) {
       if (!applyLight(true)) {
         setError("light_on_failed");
       } else {
@@ -1016,14 +1018,14 @@ class FlashlightModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "light_off")) {
+    if (core::equalsIgnoreCase(action.name, "light_off")) {
       context_.hardware->clearManualLed();
       is_on_ = false;
       setError("");
       updateStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "light_toggle")) {
+    if (core::equalsIgnoreCase(action.name, "light_toggle")) {
       if (!applyLight(!is_on_)) {
         setError("light_toggle_failed");
       } else {
@@ -1031,7 +1033,7 @@ class FlashlightModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "set_level")) {
+    if (core::equalsIgnoreCase(action.name, "set_level")) {
       DynamicJsonDocument body(128);
       uint32_t parsed = level_;
       if (parseJsonPayload(action, &body) && body["level"].is<uint32_t>()) {
@@ -1087,7 +1089,7 @@ class FlashlightModule : public ModuleBase {
                   "on=%u level=%u",
                   is_on_ ? 1U : 0U,
                   static_cast<unsigned int>(level_));
-    copyText(status_.last_event, sizeof(status_.last_event), event);
+    core::copyText(status_.last_event, sizeof(status_.last_event), event);
   }
 
   uint8_t level_ = 120U;
@@ -1206,17 +1208,17 @@ class CalculatorModule : public ModuleBase {
  public:
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "status")) {
+    if (core::equalsIgnoreCase(action.name, "status")) {
       writeStatusEvent();
       return;
     }
-    if (equalsIgnoreCase(action.name, "clear")) {
+    if (core::equalsIgnoreCase(action.name, "clear")) {
       result_ = 0.0;
       setError("");
       writeStatusEvent();
       return;
     }
-    if (!equalsIgnoreCase(action.name, "eval")) {
+    if (!core::equalsIgnoreCase(action.name, "eval")) {
       setError("unsupported_action");
       return;
     }
@@ -1231,7 +1233,7 @@ class CalculatorModule : public ModuleBase {
       setError("eval_error");
       char msg[40] = {0};
       std::snprintf(msg, sizeof(msg), "eval_error@%d", error);
-      copyText(status_.last_event, sizeof(status_.last_event), msg);
+      core::copyText(status_.last_event, sizeof(status_.last_event), msg);
       return;
     }
     result_ = value;
@@ -1252,7 +1254,7 @@ class CalculatorModule : public ModuleBase {
   void writeStatusEvent() {
     char msg[40] = {0};
     std::snprintf(msg, sizeof(msg), "result=%.4f", result_);
-    copyText(status_.last_event, sizeof(status_.last_event), msg);
+    core::copyText(status_.last_event, sizeof(status_.last_event), msg);
   }
 
   double result_ = 0.0;
@@ -1282,14 +1284,14 @@ class KidsCreativeModule : public ModuleBase {
     ModuleBase::handleAction(action);
     DynamicJsonDocument body(384);
     (void)parseJsonPayload(action, &body);
-    if (equalsIgnoreCase(action.name, "open_canvas")) {
+    if (core::equalsIgnoreCase(action.name, "open_canvas")) {
       if (body["color"].is<const char*>()) {
         current_color_ = body["color"].as<const char*>();
       }
       setError("");
       return;
     }
-    if (equalsIgnoreCase(action.name, "stroke")) {
+    if (core::equalsIgnoreCase(action.name, "stroke")) {
       ++stroke_count_;
       if (body["color"].is<const char*>()) {
         current_color_ = body["color"].as<const char*>();
@@ -1298,7 +1300,7 @@ class KidsCreativeModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "fill")) {
+    if (core::equalsIgnoreCase(action.name, "fill")) {
       if (body["color"].is<const char*>()) {
         current_color_ = body["color"].as<const char*>();
       } else if (action.payload[0] != '\0') {
@@ -1306,18 +1308,18 @@ class KidsCreativeModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "undo")) {
+    if (core::equalsIgnoreCase(action.name, "undo")) {
       if (stroke_count_ > 0U) {
         --stroke_count_;
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "clear") || equalsIgnoreCase(action.name, "clear_canvas")) {
+    if (core::equalsIgnoreCase(action.name, "clear") || core::equalsIgnoreCase(action.name, "clear_canvas")) {
       stroke_count_ = 0U;
       current_color_ = "#000000";
       return;
     }
-    if (equalsIgnoreCase(action.name, "save")) {
+    if (core::equalsIgnoreCase(action.name, "save")) {
       String target = (action.payload[0] != '\0' && action.payload[0] != '{') ? String(action.payload) : String();
       if (body["path"].is<const char*>()) {
         target = body["path"].as<const char*>();
@@ -1330,7 +1332,7 @@ class KidsCreativeModule : public ModuleBase {
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "load")) {
+    if (core::equalsIgnoreCase(action.name, "load")) {
       String source = (action.payload[0] != '\0' && action.payload[0] != '{') ? String(action.payload) : String();
       if (body["path"].is<const char*>()) {
         source = body["path"].as<const char*>();
@@ -1401,7 +1403,7 @@ class KidsLearningModule : public ModuleBase {
     ModuleBase::handleAction(action);
     DynamicJsonDocument body(512);
     (void)parseJsonPayload(action, &body);
-    if (equalsIgnoreCase(action.name, "lesson_open")) {
+    if (core::equalsIgnoreCase(action.name, "lesson_open")) {
       if (body["lesson"].is<const char*>()) {
         lesson_id_ = body["lesson"].as<const char*>();
       } else if (action.payload[0] != '\0' && action.payload[0] != '{') {
@@ -1411,19 +1413,19 @@ class KidsLearningModule : public ModuleBase {
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "lesson_next")) {
+    if (core::equalsIgnoreCase(action.name, "lesson_next")) {
       lesson_step_ += 1U;
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "lesson_prev")) {
+    if (core::equalsIgnoreCase(action.name, "lesson_prev")) {
       if (lesson_step_ > 0U) {
         lesson_step_ -= 1U;
       }
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "quiz_answer")) {
+    if (core::equalsIgnoreCase(action.name, "quiz_answer")) {
       String answer;
       if (body["answer"].is<const char*>()) {
         answer = body["answer"].as<const char*>();
@@ -1437,18 +1439,18 @@ class KidsLearningModule : public ModuleBase {
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "session_start") || equalsIgnoreCase(action.name, "play")) {
+    if (core::equalsIgnoreCase(action.name, "session_start") || core::equalsIgnoreCase(action.name, "play")) {
       startGuidedAudio(action.payload, body);
       return;
     }
-    if (equalsIgnoreCase(action.name, "pause")) {
+    if (core::equalsIgnoreCase(action.name, "pause")) {
       if (context_.audio != nullptr) {
         context_.audio->stop();
       }
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "session_stop") || equalsIgnoreCase(action.name, "stop")) {
+    if (core::equalsIgnoreCase(action.name, "session_stop") || core::equalsIgnoreCase(action.name, "stop")) {
       if (context_.media != nullptr) {
         context_.media->stop(context_.audio);
       } else if (context_.audio != nullptr) {
@@ -1457,7 +1459,7 @@ class KidsLearningModule : public ModuleBase {
       saveProgress();
       return;
     }
-    if (equalsIgnoreCase(action.name, "seek_ms")) {
+    if (core::equalsIgnoreCase(action.name, "seek_ms")) {
       cursor_ms_ = parseUint(action.payload, cursor_ms_);
       saveProgress();
       return;
@@ -1483,7 +1485,7 @@ class KidsLearningModule : public ModuleBase {
     } else {
       target = String("/apps/") + app_id_ + "/audio/session.mp3";
       if (!LittleFS.exists(target.c_str())) {
-        target = "/music/boot_radio.mp3";
+        target = defaultBundledAudioForApp(app_id_.c_str());
       }
     }
     bool ok = false;
@@ -1495,7 +1497,7 @@ class KidsLearningModule : public ModuleBase {
         }
       }
       if (startsWithIgnoreCase(target.c_str(), "http://") || startsWithIgnoreCase(target.c_str(), "https://")) {
-        ok = context_.audio->playUrl(target.c_str());
+        ok = context_.audio->play(target.c_str());
       } else if (context_.storage != nullptr && context_.storage->fileExists(target.c_str()) && context_.media != nullptr) {
         ok = context_.media->play(target.c_str(), context_.audio);
       }
@@ -1596,13 +1598,13 @@ class NesEmulatorModule : public ModuleBase {
                     sizeof(event),
                     "fps=%lu",
                     static_cast<unsigned long>(target_fps_));
-      copyText(status_.last_event, sizeof(status_.last_event), event);
+      core::copyText(status_.last_event, sizeof(status_.last_event), event);
     }
   }
 
   void handleAction(const AppAction& action) override {
     ModuleBase::handleAction(action);
-    if (equalsIgnoreCase(action.name, "list_roms")) {
+    if (core::equalsIgnoreCase(action.name, "list_roms")) {
       uint32_t count = 0U;
       File dir = LittleFS.open("/apps/nes_emulator/roms", "r");
       if (dir && dir.isDirectory()) {
@@ -1619,7 +1621,7 @@ class NesEmulatorModule : public ModuleBase {
       }
       char event[40] = {0};
       std::snprintf(event, sizeof(event), "roms=%lu", static_cast<unsigned long>(count));
-      copyText(status_.last_event, sizeof(status_.last_event), event);
+      core::copyText(status_.last_event, sizeof(status_.last_event), event);
       return;
     }
 
@@ -1630,11 +1632,11 @@ class NesEmulatorModule : public ModuleBase {
       rom_path = body["path"].as<const char*>();
     }
 
-    if (equalsIgnoreCase(action.name, "rom_validate")) {
+    if (core::equalsIgnoreCase(action.name, "rom_validate")) {
       validateRom(rom_path.c_str());
       return;
     }
-    if (equalsIgnoreCase(action.name, "rom_start")) {
+    if (core::equalsIgnoreCase(action.name, "rom_start")) {
       if (!validateRom(rom_path.c_str())) {
         return;
       }
@@ -1652,48 +1654,48 @@ class NesEmulatorModule : public ModuleBase {
       next_frame_ms_ = millis();
       frame_count_ = 0U;
       setError("");
-      copyText(status_.last_event, sizeof(status_.last_event), "rom_start");
+      core::copyText(status_.last_event, sizeof(status_.last_event), "rom_start");
       return;
     }
-    if (equalsIgnoreCase(action.name, "rom_stop")) {
+    if (core::equalsIgnoreCase(action.name, "rom_stop")) {
       emu_running_ = false;
       rom_buffer_.clear();
       rom_buffer_.shrink_to_fit();
       setError("");
-      copyText(status_.last_event, sizeof(status_.last_event), "rom_stop");
+      core::copyText(status_.last_event, sizeof(status_.last_event), "rom_stop");
       return;
     }
-    if (equalsIgnoreCase(action.name, "set_fps")) {
+    if (core::equalsIgnoreCase(action.name, "set_fps")) {
       const uint32_t requested = parseUint(action.payload, target_fps_);
       target_fps_ = (requested < 30U) ? 30U : (requested > 60U ? 60U : requested);
       return;
     }
-    if (equalsIgnoreCase(action.name, "input") ||
-        equalsIgnoreCase(action.name, "btn_down") ||
-        equalsIgnoreCase(action.name, "btn_up")) {
+    if (core::equalsIgnoreCase(action.name, "input") ||
+        core::equalsIgnoreCase(action.name, "btn_down") ||
+        core::equalsIgnoreCase(action.name, "btn_up")) {
       uint16_t mask = input_mask_;
       if (has_json && body["mask"].is<uint16_t>()) {
         mask = body["mask"].as<uint16_t>();
       } else {
         mask = static_cast<uint16_t>(parseUint(action.payload, input_mask_));
       }
-      if (equalsIgnoreCase(action.name, "btn_down")) {
+      if (core::equalsIgnoreCase(action.name, "btn_down")) {
         input_mask_ |= mask;
-      } else if (equalsIgnoreCase(action.name, "btn_up")) {
+      } else if (core::equalsIgnoreCase(action.name, "btn_up")) {
         input_mask_ &= static_cast<uint16_t>(~mask);
       } else {
         input_mask_ = mask;
       }
       return;
     }
-    if (equalsIgnoreCase(action.name, "core_status")) {
+    if (core::equalsIgnoreCase(action.name, "core_status")) {
       char event[56] = {0};
       std::snprintf(event,
                     sizeof(event),
                     "run=%u frames=%lu",
                     emu_running_ ? 1U : 0U,
                     static_cast<unsigned long>(frame_count_));
-      copyText(status_.last_event, sizeof(status_.last_event), event);
+      core::copyText(status_.last_event, sizeof(status_.last_event), event);
       return;
     }
   }
@@ -1756,7 +1758,7 @@ class NesEmulatorModule : public ModuleBase {
       return false;
     }
     setError("");
-    copyText(status_.last_event, sizeof(status_.last_event), "rom_ok");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "rom_ok");
     return true;
   }
 
@@ -1821,46 +1823,46 @@ class NesEmulatorModule : public ModuleBase {
 }  // namespace
 
 std::unique_ptr<IAppModule> createAppModule(const AppDescriptor& descriptor) {
-  if (equalsIgnoreCase(descriptor.id, "audio_player") ||
-      equalsIgnoreCase(descriptor.id, "kids_webradio") ||
-      equalsIgnoreCase(descriptor.id, "kids_podcast") ||
-      equalsIgnoreCase(descriptor.id, "kids_music")) {
+  if (core::equalsIgnoreCase(descriptor.id, "audio_player") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_webradio") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_podcast") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_music")) {
     return std::unique_ptr<IAppModule>(new AudioPlayerModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "audiobook_player")) {
+  if (core::equalsIgnoreCase(descriptor.id, "audiobook_player")) {
     return std::unique_ptr<IAppModule>(new AudiobookModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "camera_video")) {
+  if (core::equalsIgnoreCase(descriptor.id, "camera_video")) {
     return std::unique_ptr<IAppModule>(new CameraVideoModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "qr_scanner")) {
+  if (core::equalsIgnoreCase(descriptor.id, "qr_scanner")) {
     return std::unique_ptr<IAppModule>(new QrScannerModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "dictaphone")) {
+  if (core::equalsIgnoreCase(descriptor.id, "dictaphone")) {
     return std::unique_ptr<IAppModule>(new DictaphoneModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "timer_tools")) {
+  if (core::equalsIgnoreCase(descriptor.id, "timer_tools")) {
     return std::unique_ptr<IAppModule>(new TimerToolsModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "flashlight")) {
+  if (core::equalsIgnoreCase(descriptor.id, "flashlight")) {
     return std::unique_ptr<IAppModule>(new FlashlightModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "calculator")) {
+  if (core::equalsIgnoreCase(descriptor.id, "calculator")) {
     return std::unique_ptr<IAppModule>(new CalculatorModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "kids_drawing") ||
-      equalsIgnoreCase(descriptor.id, "kids_coloring")) {
+  if (core::equalsIgnoreCase(descriptor.id, "kids_drawing") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_coloring")) {
     return std::unique_ptr<IAppModule>(new KidsCreativeModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "kids_yoga") ||
-      equalsIgnoreCase(descriptor.id, "kids_meditation") ||
-      equalsIgnoreCase(descriptor.id, "kids_languages") ||
-      equalsIgnoreCase(descriptor.id, "kids_math") ||
-      equalsIgnoreCase(descriptor.id, "kids_science") ||
-      equalsIgnoreCase(descriptor.id, "kids_geography")) {
+  if (core::equalsIgnoreCase(descriptor.id, "kids_yoga") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_meditation") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_languages") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_math") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_science") ||
+      core::equalsIgnoreCase(descriptor.id, "kids_geography")) {
     return std::unique_ptr<IAppModule>(new KidsLearningModule());
   }
-  if (equalsIgnoreCase(descriptor.id, "nes_emulator")) {
+  if (core::equalsIgnoreCase(descriptor.id, "nes_emulator")) {
     return std::unique_ptr<IAppModule>(new NesEmulatorModule());
   }
   return nullptr;

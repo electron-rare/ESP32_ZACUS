@@ -27,6 +27,7 @@
 #include "ui/scene_state.h"
 #include "ui/fx/fx_engine.h"
 #include "ui_fonts.h"
+#include "core/str_utils.h"
 
 namespace {
 
@@ -139,18 +140,6 @@ int16_t activeDisplayHeight() {
     return static_cast<int16_t>(lv_disp_get_ver_res(display));
   }
   return ((FREENOVE_LCD_ROTATION & 0x1U) != 0U) ? FREENOVE_LCD_WIDTH : FREENOVE_LCD_HEIGHT;
-}
-
-void copyTextSafe(char* out, size_t out_size, const char* value) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (value == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, value, out_size - 1U);
-  out[out_size - 1U] = '\0';
 }
 
 void trimAsciiWhitespace(char* text) {
@@ -1622,9 +1611,9 @@ void UiManager::renderLgfxSceneTextOverlay(uint32_t now_ms) {
           if (prev_blank && win_etape_credits_pause_ms_[prev] == 0U) {
             return;
           }
-          copyTextSafe(win_etape_credits_lines_[win_etape_credits_count_], kWinEtapeCreditsMaxLineChars, " ");
+          core::copyText(win_etape_credits_lines_[win_etape_credits_count_], kWinEtapeCreditsMaxLineChars, " ");
         } else {
-          copyTextSafe(win_etape_credits_lines_[win_etape_credits_count_], kWinEtapeCreditsMaxLineChars, cleaned);
+          core::copyText(win_etape_credits_lines_[win_etape_credits_count_], kWinEtapeCreditsMaxLineChars, cleaned);
         }
         win_etape_credits_size_[win_etape_credits_count_] = current_size_tag;
         win_etape_credits_align_[win_etape_credits_count_] = current_align_tag;
@@ -3860,10 +3849,10 @@ void UiManager::renderScene(const ScenarioDef* scenario,
   const char* audio_pack_id_for_ui = (audio_pack_id != nullptr && audio_pack_id[0] != '\0') ? audio_pack_id : "";
   if (normalized_scene_id == nullptr) {
     scene_status_.valid = false;
-    copyTextSafe(scene_status_.scenario_id, sizeof(scene_status_.scenario_id), scenario_id);
-    copyTextSafe(scene_status_.step_id, sizeof(scene_status_.step_id), step_id_for_ui);
-    copyTextSafe(scene_status_.scene_id, sizeof(scene_status_.scene_id), raw_scene_id);
-    copyTextSafe(scene_status_.audio_pack_id, sizeof(scene_status_.audio_pack_id), audio_pack_id_for_ui);
+    core::copyText(scene_status_.scenario_id, sizeof(scene_status_.scenario_id), scenario_id);
+    core::copyText(scene_status_.step_id, sizeof(scene_status_.step_id), step_id_for_ui);
+    core::copyText(scene_status_.scene_id, sizeof(scene_status_.scene_id), raw_scene_id);
+    core::copyText(scene_status_.audio_pack_id, sizeof(scene_status_.audio_pack_id), audio_pack_id_for_ui);
     UI_LOGI("unknown scene id '%s' in scenario=%s step=%s", raw_scene_id, scenario_id, step_id_for_log);
     return;
   }
@@ -5098,7 +5087,7 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     la_bg_last_ms_ = 0U;
     la_overlay_caption_font_ = la_overlay_caption_font;
     la_overlay_caption_size_ = la_overlay_caption_size;
-    copyTextSafe(la_overlay_caption_, sizeof(la_overlay_caption_), la_overlay_caption.c_str());
+    core::copyText(la_overlay_caption_, sizeof(la_overlay_caption_), la_overlay_caption.c_str());
     warning_gyrophare_enabled_ = warning_gyrophare_enabled && (std::strcmp(scene_id, "SCENE_WARNING") == 0);
     warning_gyrophare_disable_direct_fx_ = warning_gyrophare_disable_direct_fx;
     warning_lgfx_only_ = warning_lgfx_only && (std::strcmp(scene_id, "SCENE_WARNING") == 0);
@@ -5110,7 +5099,7 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     warning_gyrophare_fps_ = warning_gyrophare_fps;
     warning_gyrophare_speed_deg_per_sec_ = warning_gyrophare_speed_deg_per_sec;
     warning_gyrophare_beam_width_deg_ = warning_gyrophare_beam_width_deg;
-    copyTextSafe(warning_gyrophare_message_, sizeof(warning_gyrophare_message_), warning_gyrophare_message.c_str());
+    core::copyText(warning_gyrophare_message_, sizeof(warning_gyrophare_message_), warning_gyrophare_message.c_str());
     warning_gyrophare_.destroy();
     if (warning_gyrophare_enabled_ && scene_root_ != nullptr) {
       ui::effects::SceneGyrophareConfig gyro_config = {};
@@ -5555,19 +5544,19 @@ void UiManager::renderScene(const ScenarioDef* scenario,
     scene_status_.accent_rgb = accent_rgb;
     scene_status_.text_rgb = text_rgb;
   }
-  copyTextSafe(scene_status_.scenario_id, sizeof(scene_status_.scenario_id), scenario_id);
-  copyTextSafe(scene_status_.step_id, sizeof(scene_status_.step_id), step_id_for_ui);
-  copyTextSafe(scene_status_.scene_id, sizeof(scene_status_.scene_id), scene_id);
-  copyTextSafe(scene_status_.audio_pack_id, sizeof(scene_status_.audio_pack_id), audio_pack_id_for_ui);
-  copyTextSafe(scene_status_.title, sizeof(scene_status_.title), title_ascii.c_str());
-  copyTextSafe(scene_status_.subtitle, sizeof(scene_status_.subtitle), subtitle_ascii.c_str());
-  copyTextSafe(scene_status_.symbol, sizeof(scene_status_.symbol), symbol_ascii.c_str());
-  copyTextSafe(scene_status_.symbol_align, sizeof(scene_status_.symbol_align), symbol_align_token);
-  copyTextSafe(scene_status_.text_backend,
+  core::copyText(scene_status_.scenario_id, sizeof(scene_status_.scenario_id), scenario_id);
+  core::copyText(scene_status_.step_id, sizeof(scene_status_.step_id), step_id_for_ui);
+  core::copyText(scene_status_.scene_id, sizeof(scene_status_.scene_id), scene_id);
+  core::copyText(scene_status_.audio_pack_id, sizeof(scene_status_.audio_pack_id), audio_pack_id_for_ui);
+  core::copyText(scene_status_.title, sizeof(scene_status_.title), title_ascii.c_str());
+  core::copyText(scene_status_.subtitle, sizeof(scene_status_.subtitle), subtitle_ascii.c_str());
+  core::copyText(scene_status_.symbol, sizeof(scene_status_.symbol), symbol_ascii.c_str());
+  core::copyText(scene_status_.symbol_align, sizeof(scene_status_.symbol_align), symbol_align_token);
+  core::copyText(scene_status_.text_backend,
                sizeof(scene_status_.text_backend),
                scene_use_lgfx_text_overlay_ ? "lgfx_overlay" : "lvgl");
-  copyTextSafe(scene_status_.effect, sizeof(scene_status_.effect), effectToToken(effect));
-  copyTextSafe(scene_status_.transition, sizeof(scene_status_.transition), transitionToToken(transition));
+  core::copyText(scene_status_.effect, sizeof(scene_status_.effect), effectToToken(effect));
+  core::copyText(scene_status_.transition, sizeof(scene_status_.transition), transitionToToken(transition));
   std::strncpy(last_scene_id_, scene_id, sizeof(last_scene_id_) - 1U);
   last_scene_id_[sizeof(last_scene_id_) - 1U] = '\0';
   last_payload_crc_ = payload_crc;

@@ -88,9 +88,7 @@ class NetworkManager {
   static void onEspNowSend(const uint8_t* mac_addr, esp_now_send_status_t status);
 
   static uint8_t parseHexByte(char high, char low, bool* ok);
-  static void copyText(char* out, size_t out_size, const char* text);
   static void formatMac(const uint8_t* mac, char* out, size_t out_size);
-  static bool equalsIgnoreCase(const char* lhs, const char* rhs);
   static const char* wifiModeLabel(uint8_t mode);
   static const char* networkStateLabel(bool sta_connected,
                                        bool sta_connecting,

@@ -21,6 +21,7 @@
 #endif
 
 #include <cstring>
+#include "core/str_utils.h"
 
 namespace {
 
@@ -72,13 +73,13 @@ bool ensureDir(const char* path) {
 }  // namespace
 
 bool FileShareService::begin(const char* host_name, const char* instance_name) {
-  copyText(host_name_, sizeof(host_name_), host_name);
-  copyText(instance_name_, sizeof(instance_name_), instance_name);
+  core::copyText(host_name_, sizeof(host_name_), host_name);
+  core::copyText(instance_name_, sizeof(instance_name_), instance_name);
   if (host_name_[0] == '\0') {
-    copyText(host_name_, sizeof(host_name_), "zacus-freenove");
+    core::copyText(host_name_, sizeof(host_name_), "zacus-freenove");
   }
   if (instance_name_[0] == '\0') {
-    copyText(instance_name_, sizeof(instance_name_), "zacus-device");
+    core::copyText(instance_name_, sizeof(instance_name_), "zacus-device");
   }
   ensureSharedDirs();
 #if ZACUS_HAS_MDNS
@@ -128,9 +129,9 @@ uint8_t FileShareService::discoverPeers(PeerInfo* out_peers, uint8_t max_peers) 
   }
   for (int i = 0; i < found && count < max_peers; ++i) {
     PeerInfo& peer = out_peers[count];
-    copyText(peer.instance, sizeof(peer.instance), MDNS.hostname(i).c_str());
-    copyText(peer.host, sizeof(peer.host), MDNS.hostname(i).c_str());
-    copyText(peer.ip, sizeof(peer.ip), MDNS.IP(i).toString().c_str());
+    core::copyText(peer.instance, sizeof(peer.instance), MDNS.hostname(i).c_str());
+    core::copyText(peer.host, sizeof(peer.host), MDNS.hostname(i).c_str());
+    core::copyText(peer.ip, sizeof(peer.ip), MDNS.IP(i).toString().c_str());
     peer.port = static_cast<uint16_t>(MDNS.port(i));
     ++count;
   }
@@ -385,18 +386,6 @@ bool FileShareService::resolveIncomingPath(const char* requested_path, String* o
   }
   *out_full_path = String(kIncomingRoot) + "/" + path;
   return true;
-}
-
-void FileShareService::copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
 }
 
 bool FileShareService::ensureSharedDirs() const {

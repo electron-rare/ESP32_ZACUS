@@ -1,6 +1,6 @@
 # Multiplexage des broches – Attention
 
-Cible matérielle : **ESP32-S3-WROOM-1-N16R8**.
+Cible matérielle : **Freenove ESP32-S3 WROOM N16R8**.
 
 Certaines broches sont partagées entre plusieurs fonctions :
 - GPIO 4 : utilisé pour le rétroéclairage (BL) et le bouton 3 (BTN3)

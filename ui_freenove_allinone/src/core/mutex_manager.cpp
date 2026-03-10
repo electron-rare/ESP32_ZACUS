@@ -1,258 +1,193 @@
-// mutex_manager.cpp - Thread-safe access protection implementation
+// mutex_manager.cpp - MutexManager singleton implementation.
 #include "core/mutex_manager.h"
 
-namespace {
+// ============================================================================
+// Singleton
+// ============================================================================
 
-// Internal mutex handles
-SemaphoreHandle_t g_audio_mutex = nullptr;
-SemaphoreHandle_t g_scenario_mutex = nullptr;
+MutexManager& MutexManager::instance() {
+  static MutexManager inst;
+  return inst;
+}
 
-// Statistics for debugging race conditions
-uint32_t g_audio_lock_count = 0;
-uint32_t g_scenario_lock_count = 0;
-uint32_t g_audio_timeout_count = 0;
-uint32_t g_scenario_timeout_count = 0;
-uint32_t g_max_audio_wait_us = 0;
-uint32_t g_max_scenario_wait_us = 0;
+// ============================================================================
+// Lifecycle
+// ============================================================================
 
-// Track mutex holder task for deadlock detection
-TaskHandle_t g_audio_mutex_owner = nullptr;
-TaskHandle_t g_scenario_mutex_owner = nullptr;
-
-}  // namespace
-
-namespace MutexManager {
-
-bool init() {
-  if (g_audio_mutex != nullptr || g_scenario_mutex != nullptr) {
+bool MutexManager::doInit() {
+  if (audio_mutex_ != nullptr || scenario_mutex_ != nullptr) {
     Serial.println("[MUTEX] WARNING: Already initialized");
     return false;
   }
 
-  g_audio_mutex = xSemaphoreCreateMutex();
-  if (g_audio_mutex == nullptr) {
+  audio_mutex_ = xSemaphoreCreateMutex();
+  if (audio_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Failed to create audio mutex");
     return false;
   }
 
-  g_scenario_mutex = xSemaphoreCreateMutex();
-  if (g_scenario_mutex == nullptr) {
+  scenario_mutex_ = xSemaphoreCreateMutex();
+  if (scenario_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Failed to create scenario mutex");
-    vSemaphoreDelete(g_audio_mutex);
-    g_audio_mutex = nullptr;
+    vSemaphoreDelete(audio_mutex_);
+    audio_mutex_ = nullptr;
     return false;
   }
 
-  // Reset stats
-  g_audio_lock_count = 0;
-  g_scenario_lock_count = 0;
-  g_audio_timeout_count = 0;
-  g_scenario_timeout_count = 0;
-  g_max_audio_wait_us = 0;
-  g_max_scenario_wait_us = 0;
-  g_audio_mutex_owner = nullptr;
-  g_scenario_mutex_owner = nullptr;
+  audio_lock_count_.store(0U);
+  scenario_lock_count_.store(0U);
+  audio_timeout_count_.store(0U);
+  scenario_timeout_count_.store(0U);
+  max_audio_wait_us_.store(0U);
+  max_scenario_wait_us_.store(0U);
+  audio_owner_ = nullptr;
+  scenario_owner_ = nullptr;
 
-  Serial.println("[MUTEX] Initialized: dual-mutex strategy (audio + scenario)");
+  Serial.println("[MUTEX] Initialized: dual-mutex (audio + scenario), atomic stats");
   return true;
 }
 
-void deinit() {
-  if (g_audio_mutex != nullptr) {
-    vSemaphoreDelete(g_audio_mutex);
-    g_audio_mutex = nullptr;
+void MutexManager::doDeinit() {
+  if (audio_mutex_ != nullptr) {
+    vSemaphoreDelete(audio_mutex_);
+    audio_mutex_ = nullptr;
   }
-  if (g_scenario_mutex != nullptr) {
-    vSemaphoreDelete(g_scenario_mutex);
-    g_scenario_mutex = nullptr;
+  if (scenario_mutex_ != nullptr) {
+    vSemaphoreDelete(scenario_mutex_);
+    scenario_mutex_ = nullptr;
   }
-  g_audio_mutex_owner = nullptr;
-  g_scenario_mutex_owner = nullptr;
+  audio_owner_ = nullptr;
+  scenario_owner_ = nullptr;
   Serial.println("[MUTEX] Deinitialized");
 }
 
-bool takeAudioMutex(uint32_t timeout_ms) {
-  if (g_audio_mutex == nullptr) {
+// ============================================================================
+// Internal helper — lock-free CAS update of a max field.
+// ============================================================================
+
+void MutexManager::updateMaxWait(std::atomic<uint32_t>& max_field, uint32_t elapsed_us) {
+  uint32_t current = max_field.load(std::memory_order_relaxed);
+  while (elapsed_us > current &&
+         !max_field.compare_exchange_weak(current, elapsed_us,
+                                          std::memory_order_relaxed,
+                                          std::memory_order_relaxed)) {
+  }
+}
+
+// ============================================================================
+// Audio mutex
+// ============================================================================
+
+bool MutexManager::takeAudio(uint32_t timeout_ms) {
+  if (audio_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Audio mutex not initialized");
     return false;
   }
 
-  // Deadlock detection: check if current task already owns scenario mutex
-  TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-  if (g_scenario_mutex_owner == current_task) {
-    Serial.println("[MUTEX] ERROR: Deadlock prevented - scenario mutex already held, cannot acquire audio mutex");
-    Serial.printf("[MUTEX]   Correct order: audio → scenario. Current: scenario → audio\n");
+  // Deadlock prevention: audio must be acquired before scenario.
+  TaskHandle_t current = xTaskGetCurrentTaskHandle();
+  if (scenario_owner_ == current) {
+    Serial.println("[MUTEX] ERROR: Deadlock prevented — scenario held, cannot take audio");
+    Serial.printf("[MUTEX]   Correct order: audio → scenario. Got: scenario → audio\n");
     return false;
   }
 
   const uint32_t start_us = micros();
-  const TickType_t ticks = (timeout_ms == 0) ? 0 : pdMS_TO_TICKS(timeout_ms);
-  const BaseType_t result = xSemaphoreTake(g_audio_mutex, ticks);
+  const TickType_t ticks = (timeout_ms == 0U) ? 0U : pdMS_TO_TICKS(timeout_ms);
+  const BaseType_t result = xSemaphoreTake(audio_mutex_, ticks);
   const uint32_t elapsed_us = micros() - start_us;
 
   if (result == pdTRUE) {
-    g_audio_lock_count++;
-    g_audio_mutex_owner = current_task;
-    if (elapsed_us > g_max_audio_wait_us) {
-      g_max_audio_wait_us = elapsed_us;
-    }
-    if (elapsed_us > 5000) {  // Log if wait > 5ms
-      Serial.printf("[MUTEX] Audio lock acquired after %lu µs (contention detected)\n", elapsed_us);
+    ++audio_lock_count_;
+    audio_owner_ = current;
+    updateMaxWait(max_audio_wait_us_, elapsed_us);
+    if (elapsed_us > 5000U) {
+      Serial.printf("[MUTEX] Audio lock acquired after %lu µs (contention)\n",
+                    static_cast<unsigned long>(elapsed_us));
     }
     return true;
   }
 
-  g_audio_timeout_count++;
-  Serial.printf("[MUTEX] ERROR: Audio mutex timeout after %lu ms (elapsed %lu µs)\n",
-                timeout_ms, elapsed_us);
+  ++audio_timeout_count_;
+  Serial.printf("[MUTEX] ERROR: Audio timeout after %lu ms (elapsed %lu µs)\n",
+                static_cast<unsigned long>(timeout_ms),
+                static_cast<unsigned long>(elapsed_us));
   return false;
 }
 
-void releaseAudioMutex() {
-  if (g_audio_mutex == nullptr) {
+void MutexManager::releaseAudio() {
+  if (audio_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Audio mutex not initialized");
     return;
   }
-
-  TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-  if (g_audio_mutex_owner != current_task) {
-    Serial.println("[MUTEX] WARNING: Releasing audio mutex from different task than owner");
+  if (audio_owner_ != xTaskGetCurrentTaskHandle()) {
+    Serial.println("[MUTEX] WARNING: Audio released from non-owner task");
   }
-
-  g_audio_mutex_owner = nullptr;
-  xSemaphoreGive(g_audio_mutex);
+  audio_owner_ = nullptr;
+  xSemaphoreGive(audio_mutex_);
 }
 
-bool takeScenarioMutex(uint32_t timeout_ms) {
-  if (g_scenario_mutex == nullptr) {
+// ============================================================================
+// Scenario mutex
+// ============================================================================
+
+bool MutexManager::takeScenario(uint32_t timeout_ms) {
+  if (scenario_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Scenario mutex not initialized");
     return false;
   }
 
   const uint32_t start_us = micros();
-  const TickType_t ticks = (timeout_ms == 0) ? 0 : pdMS_TO_TICKS(timeout_ms);
-  const BaseType_t result = xSemaphoreTake(g_scenario_mutex, ticks);
+  const TickType_t ticks = (timeout_ms == 0U) ? 0U : pdMS_TO_TICKS(timeout_ms);
+  const BaseType_t result = xSemaphoreTake(scenario_mutex_, ticks);
   const uint32_t elapsed_us = micros() - start_us;
 
   if (result == pdTRUE) {
-    g_scenario_lock_count++;
-    g_scenario_mutex_owner = xTaskGetCurrentTaskHandle();
-    if (elapsed_us > g_max_scenario_wait_us) {
-      g_max_scenario_wait_us = elapsed_us;
-    }
-    if (elapsed_us > 5000) {  // Log if wait > 5ms
-      Serial.printf("[MUTEX] Scenario lock acquired after %lu µs (contention detected)\n", elapsed_us);
+    ++scenario_lock_count_;
+    scenario_owner_ = xTaskGetCurrentTaskHandle();
+    updateMaxWait(max_scenario_wait_us_, elapsed_us);
+    if (elapsed_us > 5000U) {
+      Serial.printf("[MUTEX] Scenario lock acquired after %lu µs (contention)\n",
+                    static_cast<unsigned long>(elapsed_us));
     }
     return true;
   }
 
-  g_scenario_timeout_count++;
-  Serial.printf("[MUTEX] ERROR: Scenario mutex timeout after %lu ms (elapsed %lu µs)\n",
-                timeout_ms, elapsed_us);
+  ++scenario_timeout_count_;
+  Serial.printf("[MUTEX] ERROR: Scenario timeout after %lu ms (elapsed %lu µs)\n",
+                static_cast<unsigned long>(timeout_ms),
+                static_cast<unsigned long>(elapsed_us));
   return false;
 }
 
-void releaseScenarioMutex() {
-  if (g_scenario_mutex == nullptr) {
+void MutexManager::releaseScenario() {
+  if (scenario_mutex_ == nullptr) {
     Serial.println("[MUTEX] ERROR: Scenario mutex not initialized");
     return;
   }
-
-  TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-  if (g_scenario_mutex_owner != current_task) {
-    Serial.println("[MUTEX] WARNING: Releasing scenario mutex from different task than owner");
+  if (scenario_owner_ != xTaskGetCurrentTaskHandle()) {
+    Serial.println("[MUTEX] WARNING: Scenario released from non-owner task");
   }
-
-  g_scenario_mutex_owner = nullptr;
-  xSemaphoreGive(g_scenario_mutex);
+  scenario_owner_ = nullptr;
+  xSemaphoreGive(scenario_mutex_);
 }
 
-bool takeBothMutexes(uint32_t timeout_ms) {
-  // Acquire audio mutex first (deadlock prevention order: audio → scenario)
-  if (!takeAudioMutex(timeout_ms)) {
+// ============================================================================
+// Both mutexes (deadlock-safe order: audio → scenario)
+// ============================================================================
+
+bool MutexManager::takeBoth(uint32_t timeout_ms) {
+  if (!takeAudio(timeout_ms)) {
     return false;
   }
-
-  // Then scenario mutex
-  if (!takeScenarioMutex(timeout_ms)) {
-    releaseAudioMutex();  // Rollback on failure
+  if (!takeScenario(timeout_ms)) {
+    releaseAudio();  // Rollback on partial failure.
     return false;
   }
-
   return true;
 }
 
-void releaseBothMutexes() {
-  // Release in reverse order (scenario → audio)
-  releaseScenarioMutex();
-  releaseAudioMutex();
-}
-
-uint32_t audioLockCount() {
-  return g_audio_lock_count;
-}
-
-uint32_t scenarioLockCount() {
-  return g_scenario_lock_count;
-}
-
-uint32_t audioTimeoutCount() {
-  return g_audio_timeout_count;
-}
-
-uint32_t scenarioTimeoutCount() {
-  return g_scenario_timeout_count;
-}
-
-uint32_t maxAudioWaitUs() {
-  return g_max_audio_wait_us;
-}
-
-uint32_t maxScenarioWaitUs() {
-  return g_max_scenario_wait_us;
-}
-
-}  // namespace MutexManager
-
-// ============================================================================
-// RAII LOCK GUARDS IMPLEMENTATION
-// ============================================================================
-
-AudioLock::AudioLock(uint32_t timeout_ms)
-    : acquired_(MutexManager::takeAudioMutex(timeout_ms)) {
-  if (!acquired_) {
-    Serial.printf("[MUTEX] AudioLock FAILED (timeout %lu ms)\n", timeout_ms);
-  }
-}
-
-AudioLock::~AudioLock() {
-  if (acquired_) {
-    MutexManager::releaseAudioMutex();
-  }
-}
-
-ScenarioLock::ScenarioLock(uint32_t timeout_ms)
-    : acquired_(MutexManager::takeScenarioMutex(timeout_ms)) {
-  if (!acquired_) {
-    Serial.printf("[MUTEX] ScenarioLock FAILED (timeout %lu ms)\n", timeout_ms);
-  }
-}
-
-ScenarioLock::~ScenarioLock() {
-  if (acquired_) {
-    MutexManager::releaseScenarioMutex();
-  }
-}
-
-DualLock::DualLock(uint32_t timeout_ms)
-    : acquired_(MutexManager::takeBothMutexes(timeout_ms)) {
-  if (!acquired_) {
-    Serial.printf("[MUTEX] DualLock FAILED (timeout %lu ms)\n", timeout_ms);
-  }
-}
-
-DualLock::~DualLock() {
-  if (acquired_) {
-    MutexManager::releaseBothMutexes();
-  }
+void MutexManager::releaseBoth() {
+  releaseScenario();  // Reverse order: scenario → audio.
+  releaseAudio();
 }

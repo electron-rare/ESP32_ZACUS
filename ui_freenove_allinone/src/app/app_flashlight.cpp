@@ -42,7 +42,7 @@ void AppFlashlight::onAction(const AppAction& action) {
   } else if (strcmp(action.name, "toggle") == 0) {
     toggle();
   } else if (strcmp(action.name, "intensity") == 0) {
-    int percent = atoi(action.payload);
+    int percent = static_cast<int>(strtol(action.payload, nullptr, 10));
     setIntensity(constrain(percent, 0, 100));
   }
 }

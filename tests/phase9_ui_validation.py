@@ -1,22 +1,61 @@
 #!/usr/bin/env python3
 """
-Phase 9: Device UI Validation & Touch Input Testing
+Phase 9: Device UI Validation
 Tests:
 1. Verify firmware boot & AmigaUIShell initialization
 2. Monitor serial logs for UI animation frames
 3. Validate system responsiveness (PING/STATUS)
-4. Prepare for touch input mapping tests
+4. Check repeated serial interactions for stability
 """
 
+import argparse
+import os
 import serial
-import time
 import sys
-from pathlib import Path
+import time
 
 # Configuration
-SERIAL_PORT = "/dev/cu.usbmodem5AB90753301"
-BAUD_RATE = 115200
-TIMEOUT = 2.0
+SERIAL_PORT = os.environ.get("ZACUS_SERIAL_PORT", "")
+BAUD_RATE = int(os.environ.get("ZACUS_SERIAL_BAUD", "115200"))
+TIMEOUT = float(os.environ.get("ZACUS_SERIAL_TIMEOUT", "2.0"))
+
+
+def open_serial_port() -> serial.Serial:
+    ser = serial.Serial()
+    ser.port = SERIAL_PORT
+    ser.baudrate = BAUD_RATE
+    ser.timeout = TIMEOUT
+    ser.write_timeout = 1.0
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    time.sleep(0.25)
+    return ser
+
+
+def wait_for_boot_settle(ser: serial.Serial, timeout_s: float = 45.0, quiet_s: float = 2.0) -> None:
+    deadline = time.time() + timeout_s
+    last_rx = time.time()
+    while time.time() < deadline:
+        if ser.in_waiting > 0:
+            _ = ser.read(ser.in_waiting)
+            last_rx = time.time()
+        elif (time.time() - last_rx) >= quiet_s:
+            return
+        time.sleep(0.04)
+
+
+def send_command(ser: serial.Serial, command: str, wait_s: float = 2.0) -> str:
+    ser.reset_input_buffer()
+    ser.write((command + "\n").encode("utf-8"))
+    ser.flush()
+    deadline = time.time() + wait_s
+    chunks = []
+    while time.time() < deadline:
+        if ser.in_waiting > 0:
+            chunks.append(ser.read(ser.in_waiting).decode("utf-8", errors="ignore"))
+        time.sleep(0.03)
+    return "".join(chunks)
 
 def test_device_responsive():
     """Test 1: Device PING/STATUS"""
@@ -25,15 +64,12 @@ def test_device_responsive():
     print("="*60)
     
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
-        time.sleep(0.5)  # Wait for serial to stabilize
+        ser = open_serial_port()
+        wait_for_boot_settle(ser)
         
         # Send PING
         print("[SERIAL] Sending: PING")
-        ser.write(b"PING\n")
-        time.sleep(0.2)
-        
-        response = ser.readline().decode('utf-8', errors='ignore').strip()
+        response = send_command(ser, "PING", wait_s=2.2).strip()
         if response:
             print(f"[RESPONSE] {response}")
             if "PONG" in response:
@@ -45,17 +81,10 @@ def test_device_responsive():
         
         # Send STATUS
         print("\n[SERIAL] Sending: STATUS")
-        ser.write(b"STATUS\n")
-        time.sleep(0.3)
-        
-        status_lines = []
-        for _ in range(5):
-            line = ser.readline().decode('utf-8', errors='ignore').strip()
-            if line:
-                print(f"[STATUS] {line}")
-                status_lines.append(line)
-            if "scenario" in line.lower():
-                break
+        raw_status = send_command(ser, "STATUS", wait_s=2.4)
+        status_lines = [line.strip() for line in raw_status.splitlines() if line.strip()]
+        for line in status_lines:
+            print(f"[STATUS] {line}")
         
         ser.close()
         return len(status_lines) > 0
@@ -71,8 +100,7 @@ def capture_startup_logs():
     print("="*60)
     
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
-        time.sleep(0.5)
+        ser = open_serial_port()
         
         print("[SERIAL] Waiting for boot logs (10 seconds)...")
         print("-" * 60)
@@ -116,8 +144,8 @@ def monitor_animation_frames():
     print("="*60)
     
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
-        time.sleep(0.5)
+        ser = open_serial_port()
+        wait_for_boot_settle(ser)
         
         print("[SERIAL] Monitoring for animation tick messages (5 seconds)...")
         print("-" * 60)
@@ -168,27 +196,23 @@ def check_memory_stability():
     print("="*60)
     
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
-        time.sleep(0.5)
+        ser = open_serial_port()
+        wait_for_boot_settle(ser)
         
         # Trigger multiple HELP commands to stress test
         print("[SERIAL] Sending 5 HELP commands to monitor memory stability...")
         
         for i in range(5):
-            ser.write(b"HELP\n")
-            time.sleep(0.2)
-            
-            line = ser.readline(1024).decode('utf-8', errors='ignore').strip()
-            if "command" in line.lower():
+            raw = send_command(ser, "HELP", wait_s=2.0)
+            line = raw.strip()
+            if "command" in line.lower() or "CMDS " in line:
                 print(f"  HELP #{i+1}: Command list received")
         
         # Send STATUS to check current memory
         print("\n[SERIAL] Final STATUS check...")
-        ser.write(b"STATUS\n")
-        time.sleep(0.3)
-        
-        for _ in range(5):
-            line = ser.readline(1024).decode('utf-8', errors='ignore').strip()
+        raw_status = send_command(ser, "STATUS", wait_s=2.4)
+        for line in raw_status.splitlines():
+            line = line.strip()
             if line:
                 print(f"  {line}")
         
@@ -201,8 +225,20 @@ def check_memory_stability():
         return False
 
 def main():
+    global SERIAL_PORT, BAUD_RATE, TIMEOUT
+    parser = argparse.ArgumentParser(description="Phase 9 UI validation over serial.")
+    parser.add_argument("--port", default=SERIAL_PORT)
+    parser.add_argument("--baud", type=int, default=BAUD_RATE)
+    parser.add_argument("--timeout", type=float, default=TIMEOUT)
+    args = parser.parse_args()
+    if not args.port:
+        parser.error("--port or ZACUS_SERIAL_PORT is required")
+
+    SERIAL_PORT = args.port
+    BAUD_RATE = args.baud
+    TIMEOUT = args.timeout
     print("\n" + "█"*60)
-    print(" Phase 9: Device UI Validation & Touch Input Setup")
+    print(" Phase 9: Device UI Validation")
     print("█"*60)
     
     results = {

@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include "core/str_utils.h"
 
 namespace {
 
@@ -197,7 +198,7 @@ void NetworkManager::update(uint32_t now_ms) {
         Serial.printf("[NET] local retry paused ap_clients=%u\n", ap_clients);
       }
     } else if (!sta_connecting_ && (next_local_retry_at_ms_ == 0U || timeReached(now_ms, next_local_retry_at_ms_))) {
-      if (fallback_ap_active_ && equalsIgnoreCase(fallback_ap_ssid_, local_target_ssid_)) {
+      if (fallback_ap_active_ && core::equalsIgnoreCase(fallback_ap_ssid_, local_target_ssid_)) {
         // Avoid self-association when fallback AP and local target share the same SSID.
         WiFi.softAPdisconnect(true);
         fallback_ap_active_ = false;
@@ -223,10 +224,10 @@ void NetworkManager::update(uint32_t now_ms) {
 
 void NetworkManager::configureFallbackAp(const char* ssid, const char* password) {
   if (ssid != nullptr) {
-    copyText(fallback_ap_ssid_, sizeof(fallback_ap_ssid_), ssid);
+    core::copyText(fallback_ap_ssid_, sizeof(fallback_ap_ssid_), ssid);
   }
   if (password != nullptr) {
-    copyText(fallback_ap_password_, sizeof(fallback_ap_password_), password);
+    core::copyText(fallback_ap_password_, sizeof(fallback_ap_password_), password);
   }
   Serial.printf("[NET] fallback AP configured ssid=%s\n", fallback_ap_ssid_);
 }
@@ -237,10 +238,10 @@ void NetworkManager::configureLocalPolicy(const char* ssid,
                                           uint32_t retry_ms,
                                           bool pause_retry_when_ap_client) {
   if (ssid != nullptr) {
-    copyText(local_target_ssid_, sizeof(local_target_ssid_), ssid);
+    core::copyText(local_target_ssid_, sizeof(local_target_ssid_), ssid);
   }
   if (password != nullptr) {
-    copyText(local_target_password_, sizeof(local_target_password_), password);
+    core::copyText(local_target_password_, sizeof(local_target_password_), password);
   }
   force_ap_if_not_local_ = force_if_not_local;
   pause_local_retry_when_ap_client_ = pause_retry_when_ap_client;
@@ -265,7 +266,7 @@ bool NetworkManager::connectSta(const char* ssid, const char* password) {
     return false;
   }
 
-  if (WiFi.status() == WL_CONNECTED && equalsIgnoreCase(WiFi.SSID().c_str(), ssid)) {
+  if (WiFi.status() == WL_CONNECTED && core::equalsIgnoreCase(WiFi.SSID().c_str(), ssid)) {
     sta_connecting_ = false;
     refreshSnapshot();
     return true;
@@ -274,7 +275,7 @@ bool NetworkManager::connectSta(const char* ssid, const char* password) {
   const uint8_t mode = (manual_ap_active_ || fallback_ap_active_) ? WIFI_MODE_APSTA : WIFI_MODE_STA;
   WiFi.mode(static_cast<wifi_mode_t>(mode));
   WiFi.begin(ssid, (password != nullptr) ? password : "");
-  copyText(snapshot_.sta_ssid, sizeof(snapshot_.sta_ssid), ssid);
+  core::copyText(snapshot_.sta_ssid, sizeof(snapshot_.sta_ssid), ssid);
   sta_connecting_ = true;
   sta_connect_requested_at_ms_ = millis();
   refreshSnapshot();
@@ -306,7 +307,7 @@ bool NetworkManager::isConnectedToLocalTarget() const {
   if (local_target_ssid_[0] == '\0' || WiFi.status() != WL_CONNECTED) {
     return false;
   }
-  if (!equalsIgnoreCase(WiFi.SSID().c_str(), local_target_ssid_)) {
+  if (!core::equalsIgnoreCase(WiFi.SSID().c_str(), local_target_ssid_)) {
     return false;
   }
   return !isConnectedToSelfAp();
@@ -361,7 +362,7 @@ bool NetworkManager::startApInternal(const char* ssid, const char* password, boo
     ok = WiFi.softAP(ssid, nullptr, kEspNowPreferredChannel);
   }
   if (ok) {
-    copyText(snapshot_.ap_ssid, sizeof(snapshot_.ap_ssid), ssid);
+    core::copyText(snapshot_.ap_ssid, sizeof(snapshot_.ap_ssid), ssid);
     if (manual_request) {
       manual_ap_active_ = true;
       fallback_ap_active_ = false;
@@ -531,7 +532,7 @@ bool NetworkManager::espNowPeerAt(uint8_t index, char* out_mac, size_t out_capac
   bool ok = false;
   enterCritical(&rx_queue_mux_, false);
   if (index < peer_cache_count_) {
-    copyText(out_mac, out_capacity, peer_cache_[index]);
+    core::copyText(out_mac, out_capacity, peer_cache_[index]);
     ok = true;
   }
   exitCritical(&rx_queue_mux_, false);
@@ -671,7 +672,7 @@ bool NetworkManager::sendEspNowTarget(const char* target, const char* text) {
   }
 
   char frame[kEspNowFrameCapacity + 1U] = {0};
-  copyText(frame, sizeof(frame), text);
+  core::copyText(frame, sizeof(frame), text);
   trimAsciiInPlace(frame);
   if (frame[0] == '\0') {
     return false;
@@ -699,7 +700,7 @@ bool NetworkManager::sendEspNowTarget(const char* target, const char* text) {
     }
   }
 
-  if (target != nullptr && target[0] != '\0' && !equalsIgnoreCase(target, kBroadcastTarget)) {
+  if (target != nullptr && target[0] != '\0' && !core::equalsIgnoreCase(target, kBroadcastTarget)) {
     uint8_t target_mac[6] = {0};
     if (parseMac(target, target_mac)) {
       return sendEspNowText(target_mac, frame);
@@ -739,7 +740,7 @@ bool NetworkManager::consumeEspNowMessage(char* out_payload,
     exitCritical(&rx_queue_mux_, false);
 
     char normalized_payload[kPayloadCapacity] = {0};
-    copyText(normalized_payload, sizeof(normalized_payload), entry.payload);
+    core::copyText(normalized_payload, sizeof(normalized_payload), entry.payload);
     char msg_id[32] = {0};
     uint32_t seq = 0U;
     char envelope_type[24] = {0};
@@ -749,9 +750,9 @@ bool NetworkManager::consumeEspNowMessage(char* out_payload,
       StaticJsonDocument<512> document;
       if (!deserializeJson(document, entry.payload) && looksLikeEspNowEnvelope(document.as<JsonVariantConst>())) {
         JsonVariantConst root = document.as<JsonVariantConst>();
-        copyText(msg_id, sizeof(msg_id), root["msg_id"] | "");
+        core::copyText(msg_id, sizeof(msg_id), root["msg_id"] | "");
         seq = root["seq"] | 0U;
-        copyText(envelope_type, sizeof(envelope_type), root["type"] | "");
+        core::copyText(envelope_type, sizeof(envelope_type), root["type"] | "");
         const bool envelope_ack = root["ack"] | false;
         const bool ack_response = envelope_ack && std::strcmp(envelope_type, "ack") == 0;
         if (ack_response) {
@@ -759,37 +760,37 @@ bool NetworkManager::consumeEspNowMessage(char* out_payload,
         }
         ack_requested = envelope_ack;
         if (root["payload"].is<const char*>()) {
-          copyText(normalized_payload, sizeof(normalized_payload), root["payload"].as<const char*>());
+          core::copyText(normalized_payload, sizeof(normalized_payload), root["payload"].as<const char*>());
         } else if (!root["payload"].isNull()) {
           char payload_text[kPayloadCapacity] = {0};
           const size_t payload_size = serializeJson(root["payload"], payload_text, sizeof(payload_text));
           if (payload_size > 0U) {
-            copyText(normalized_payload, sizeof(normalized_payload), payload_text);
+            core::copyText(normalized_payload, sizeof(normalized_payload), payload_text);
           }
         }
         if (envelope_type[0] == '\0') {
-          copyText(envelope_type, sizeof(envelope_type), inferEnvelopeType(normalized_payload));
+          core::copyText(envelope_type, sizeof(envelope_type), inferEnvelopeType(normalized_payload));
         }
       }
     }
     if (envelope_type[0] == '\0') {
-      copyText(envelope_type, sizeof(envelope_type), inferEnvelopeType(normalized_payload));
+      core::copyText(envelope_type, sizeof(envelope_type), inferEnvelopeType(normalized_payload));
     }
 
     if (out_payload != nullptr && payload_capacity > 0U) {
-      copyText(out_payload, payload_capacity, normalized_payload);
+      core::copyText(out_payload, payload_capacity, normalized_payload);
     }
     if (out_peer != nullptr && peer_capacity > 0U) {
-      copyText(out_peer, peer_capacity, entry.peer);
+      core::copyText(out_peer, peer_capacity, entry.peer);
     }
     if (out_msg_id != nullptr && msg_id_capacity > 0U) {
-      copyText(out_msg_id, msg_id_capacity, msg_id);
+      core::copyText(out_msg_id, msg_id_capacity, msg_id);
     }
     if (out_seq != nullptr) {
       *out_seq = seq;
     }
     if (out_type != nullptr && type_capacity > 0U) {
-      copyText(out_type, type_capacity, envelope_type);
+      core::copyText(out_type, type_capacity, envelope_type);
     }
     if (out_ack_requested != nullptr) {
       *out_ack_requested = ack_requested;
@@ -839,24 +840,12 @@ uint8_t NetworkManager::parseHexByte(char high, char low, bool* ok) {
   return static_cast<uint8_t>((hi << 4) | lo);
 }
 
-void NetworkManager::copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
-
 void NetworkManager::formatMac(const uint8_t* mac, char* out, size_t out_size) {
   if (out == nullptr || out_size == 0U) {
     return;
   }
   if (mac == nullptr) {
-    copyText(out, out_size, "00:00:00:00:00:00");
+    core::copyText(out, out_size, "00:00:00:00:00:00");
     return;
   }
   snprintf(out,
@@ -868,22 +857,6 @@ void NetworkManager::formatMac(const uint8_t* mac, char* out, size_t out_size) {
            mac[3],
            mac[4],
            mac[5]);
-}
-
-bool NetworkManager::equalsIgnoreCase(const char* lhs, const char* rhs) {
-  if (lhs == nullptr || rhs == nullptr) {
-    return false;
-  }
-  size_t index = 0U;
-  while (lhs[index] != '\0' && rhs[index] != '\0') {
-    const char l = static_cast<char>(std::tolower(static_cast<unsigned char>(lhs[index])));
-    const char r = static_cast<char>(std::tolower(static_cast<unsigned char>(rhs[index])));
-    if (l != r) {
-      return false;
-    }
-    ++index;
-  }
-  return lhs[index] == '\0' && rhs[index] == '\0';
 }
 
 const char* NetworkManager::wifiModeLabel(uint8_t mode) {
@@ -965,15 +938,15 @@ void NetworkManager::cachePeer(const uint8_t mac[6], bool from_isr) {
     }
   }
   if (peer_cache_count_ < kMaxPeerCache) {
-    copyText(peer_cache_[peer_cache_count_], sizeof(peer_cache_[peer_cache_count_]), peer_text);
+    core::copyText(peer_cache_[peer_cache_count_], sizeof(peer_cache_[peer_cache_count_]), peer_text);
     ++peer_cache_count_;
     exitCritical(&rx_queue_mux_, from_isr);
     return;
   }
   for (uint8_t index = 1U; index < kMaxPeerCache; ++index) {
-    copyText(peer_cache_[index - 1U], sizeof(peer_cache_[index - 1U]), peer_cache_[index]);
+    core::copyText(peer_cache_[index - 1U], sizeof(peer_cache_[index - 1U]), peer_cache_[index]);
   }
-  copyText(peer_cache_[kMaxPeerCache - 1U], sizeof(peer_cache_[kMaxPeerCache - 1U]), peer_text);
+  core::copyText(peer_cache_[kMaxPeerCache - 1U], sizeof(peer_cache_[kMaxPeerCache - 1U]), peer_text);
   exitCritical(&rx_queue_mux_, from_isr);
 }
 
@@ -996,7 +969,7 @@ void NetworkManager::forgetPeer(const uint8_t mac[6]) {
       continue;
     }
     for (uint8_t move = index + 1U; move < peer_cache_count_; ++move) {
-      copyText(peer_cache_[move - 1U], sizeof(peer_cache_[move - 1U]), peer_cache_[move]);
+      core::copyText(peer_cache_[move - 1U], sizeof(peer_cache_[move - 1U]), peer_cache_[move]);
     }
     peer_cache_[peer_cache_count_ - 1U][0] = '\0';
     --peer_cache_count_;
@@ -1023,10 +996,10 @@ bool NetworkManager::queueEspNowMessage(const char* payload,
     ++espnow_drop_packets_;
   }
   EspNowMessage& slot = rx_queue_[rx_queue_tail_];
-  copyText(slot.payload, sizeof(slot.payload), payload);
-  copyText(slot.peer, sizeof(slot.peer), peer);
-  copyText(slot.msg_id, sizeof(slot.msg_id), msg_id);
-  copyText(slot.type, sizeof(slot.type), type);
+  core::copyText(slot.payload, sizeof(slot.payload), payload);
+  core::copyText(slot.peer, sizeof(slot.peer), peer);
+  core::copyText(slot.msg_id, sizeof(slot.msg_id), msg_id);
+  core::copyText(slot.type, sizeof(slot.type), type);
   slot.seq = seq;
   slot.ack_requested = ack_requested;
   rx_queue_tail_ = static_cast<uint8_t>((rx_queue_tail_ + 1U) % kRxQueueSize);
@@ -1054,19 +1027,19 @@ void NetworkManager::refreshSnapshot() {
   char state_label[16] = {0};
   uint8_t ap_clients = 0U;
 
-  copyText(local_target, sizeof(local_target), local_target_ssid_);
-  copyText(mode_label, sizeof(mode_label), wifiModeLabel(static_cast<uint8_t>(mode)));
-  copyText(state_label,
+  core::copyText(local_target, sizeof(local_target), local_target_ssid_);
+  core::copyText(mode_label, sizeof(mode_label), wifiModeLabel(static_cast<uint8_t>(mode)));
+  core::copyText(state_label,
            sizeof(state_label),
            networkStateLabel(sta_connected, sta_connecting_, ap_enabled, fallback_ap_active));
   if (sta_connected) {
-    copyText(sta_ssid, sizeof(sta_ssid), WiFi.SSID().c_str());
-    copyText(ip, sizeof(ip), WiFi.localIP().toString().c_str());
+    core::copyText(sta_ssid, sizeof(sta_ssid), WiFi.SSID().c_str());
+    core::copyText(ip, sizeof(ip), WiFi.localIP().toString().c_str());
   } else if (ap_enabled) {
-    copyText(ip, sizeof(ip), WiFi.softAPIP().toString().c_str());
+    core::copyText(ip, sizeof(ip), WiFi.softAPIP().toString().c_str());
   }
   if (ap_enabled) {
-    copyText(ap_ssid, sizeof(ap_ssid), WiFi.softAPSSID().c_str());
+    core::copyText(ap_ssid, sizeof(ap_ssid), WiFi.softAPSSID().c_str());
     ap_clients = WiFi.softAPgetStationNum();
   }
 
@@ -1081,12 +1054,12 @@ void NetworkManager::refreshSnapshot() {
   snapshot_.local_retry_paused = local_retry_paused_;
   snapshot_.rssi = rssi;
   snapshot_.channel = channel;
-  copyText(snapshot_.local_target, sizeof(snapshot_.local_target), local_target);
-  copyText(snapshot_.mode, sizeof(snapshot_.mode), mode_label);
-  copyText(snapshot_.state, sizeof(snapshot_.state), state_label);
-  copyText(snapshot_.sta_ssid, sizeof(snapshot_.sta_ssid), sta_ssid);
-  copyText(snapshot_.ap_ssid, sizeof(snapshot_.ap_ssid), ap_ssid);
-  copyText(snapshot_.ip, sizeof(snapshot_.ip), ip);
+  core::copyText(snapshot_.local_target, sizeof(snapshot_.local_target), local_target);
+  core::copyText(snapshot_.mode, sizeof(snapshot_.mode), mode_label);
+  core::copyText(snapshot_.state, sizeof(snapshot_.state), state_label);
+  core::copyText(snapshot_.sta_ssid, sizeof(snapshot_.sta_ssid), sta_ssid);
+  core::copyText(snapshot_.ap_ssid, sizeof(snapshot_.ap_ssid), ap_ssid);
+  core::copyText(snapshot_.ip, sizeof(snapshot_.ip), ip);
   snapshot_.ap_clients = ap_clients;
   snapshot_.espnow_peer_count = peer_cache_count_;
   snapshot_.espnow_rx_packets = espnow_rx_packets_;
@@ -1112,13 +1085,13 @@ void NetworkManager::handleEspNowRecv(const uint8_t* mac_addr, const uint8_t* da
   cachePeer(mac_addr, from_isr);
   enterCritical(&rx_queue_mux_, from_isr);
   ++espnow_rx_packets_;
-  copyText(snapshot_.last_peer, sizeof(snapshot_.last_peer), peer_text);
-  copyText(snapshot_.last_rx_peer, sizeof(snapshot_.last_rx_peer), peer_text);
+  core::copyText(snapshot_.last_peer, sizeof(snapshot_.last_peer), peer_text);
+  core::copyText(snapshot_.last_rx_peer, sizeof(snapshot_.last_rx_peer), peer_text);
   snapshot_.espnow_last_seq = 0U;
   snapshot_.espnow_last_ack = false;
   snapshot_.last_msg_id[0] = '\0';
-  copyText(snapshot_.last_type, sizeof(snapshot_.last_type), inferEnvelopeType(payload));
-  copyText(snapshot_.last_payload, sizeof(snapshot_.last_payload), payload);
+  core::copyText(snapshot_.last_type, sizeof(snapshot_.last_type), inferEnvelopeType(payload));
+  core::copyText(snapshot_.last_payload, sizeof(snapshot_.last_payload), payload);
   exitCritical(&rx_queue_mux_, from_isr);
   queueEspNowMessage(payload, peer_text, "", 0U, "", false, from_isr);
 }

@@ -2,11 +2,11 @@
 #include "app/app_runtime_manager.h"
 
 #include <cstdlib>
-#include <cstring>
 
 #include "app/modules/app_modules.h"
 #include "audio_manager.h"
 #include "camera_manager.h"
+#include "core/str_utils.h"
 #include "hardware_manager.h"
 #include "media_manager.h"
 #include "network_manager.h"
@@ -20,281 +20,253 @@
 
 namespace {
 
-bool equalsIgnoreCase(const char* lhs, const char* rhs) {
-  if (lhs == nullptr || rhs == nullptr) {
-    return false;
+// ============================================================================
+// Heap snapshot cache — ESP.getFreeHeap() is expensive; refresh every 1 s.
+// ============================================================================
+
+struct HeapCache {
+  uint32_t heap_free  = 0U;
+  uint32_t psram_free = 0U;
+  uint32_t last_ms    = 0U;
+
+  void refresh() {
+    const uint32_t now = millis();
+    if (now - last_ms < 1000U) return;
+    heap_free  = ESP.getFreeHeap();
+#if defined(ARDUINO_ARCH_ESP32)
+    psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+#else
+    psram_free = 0U;
+#endif
+    last_ms = now;
   }
-  for (size_t i = 0U;; ++i) {
-    const char a = lhs[i];
-    const char b = rhs[i];
-    if (a == '\0' && b == '\0') {
-      return true;
-    }
-    if (a == '\0' || b == '\0') {
-      return false;
-    }
-    const char lower_a = (a >= 'A' && a <= 'Z') ? static_cast<char>(a - 'A' + 'a') : a;
-    const char lower_b = (b >= 'A' && b <= 'Z') ? static_cast<char>(b - 'A' + 'a') : b;
-    if (lower_a != lower_b) {
-      return false;
-    }
+};
+
+HeapCache g_heap_cache;
+
+void updateRuntimePerfCounters(AppRuntimeStatus* status, uint32_t tick_us) {
+  if (status == nullptr) return;
+  if (tick_us > status->max_tick_us) {
+    status->max_tick_us = tick_us;
   }
+  status->avg_tick_us = (status->avg_tick_us == 0U)
+                            ? tick_us
+                            : ((status->avg_tick_us * 7U) + tick_us) / 8U;
+  g_heap_cache.refresh();
+  status->heap_free  = g_heap_cache.heap_free;
+  status->psram_free = g_heap_cache.psram_free;
 }
+
+// ============================================================================
+// BasicAppModule — default behaviour for apps without a dedicated module.
+// ID-based dispatch maps app IDs to hardware actions at start/end.
+// ============================================================================
 
 class BasicAppModule : public IAppModule {
  public:
-  bool begin(const AppContext& context) override {
-    context_ = context;
+  bool begin(const AppContext& ctx) override {
+    ctx_    = ctx;
     status_ = {};
-    if (context.descriptor != nullptr) {
-      copyText(status_.id, sizeof(status_.id), context.descriptor->id);
+    if (ctx.descriptor != nullptr) {
+      core::copyText(status_.id, sizeof(status_.id), ctx.descriptor->id);
     }
-    status_.state = AppRuntimeState::kStarting;
+    status_.state         = AppRuntimeState::kStarting;
     status_.started_at_ms = millis();
 
-    if (context.descriptor == nullptr) {
-      copyText(status_.last_error, sizeof(status_.last_error), "missing_descriptor");
+    if (ctx.descriptor == nullptr) {
+      core::copyText(status_.last_error, sizeof(status_.last_error), "missing_descriptor");
       status_.state = AppRuntimeState::kFailed;
       return false;
     }
 
-    const char* id = context.descriptor->id;
+    const char* id = ctx.descriptor->id;
     bool ok = true;
 
-    if (equalsIgnoreCase(id, "camera_video") || equalsIgnoreCase(id, "qr_scanner")) {
-      ok = (context.camera != nullptr) && context.camera->start();
-      if (!ok) {
-        copyText(status_.last_error, sizeof(status_.last_error), "camera_start_failed");
-      }
-    } else if (equalsIgnoreCase(id, "dictaphone")) {
-      ok = (context.media != nullptr) && context.media->startRecording(30U, nullptr);
-      if (!ok) {
-        copyText(status_.last_error, sizeof(status_.last_error), "record_start_failed");
-      }
-    } else if (equalsIgnoreCase(id, "flashlight")) {
-      ok = (context.hardware != nullptr) && context.hardware->setManualLed(255U, 255U, 255U, 120U, false);
-      if (!ok) {
-        copyText(status_.last_error, sizeof(status_.last_error), "flashlight_start_failed");
-      }
-    } else if (equalsIgnoreCase(id, "audio_player") ||
-               equalsIgnoreCase(id, "audiobook_player") ||
-               equalsIgnoreCase(id, "kids_webradio") ||
-               equalsIgnoreCase(id, "kids_podcast") ||
-               equalsIgnoreCase(id, "kids_music")) {
-      ok = (context.audio != nullptr) && context.audio->play("/music/boot_radio.mp3");
-      if (!ok) {
-        copyText(status_.last_error, sizeof(status_.last_error), "audio_start_failed");
-      }
+    if (core::equalsIgnoreCase(id, "camera_video") ||
+        core::equalsIgnoreCase(id, "qr_scanner")) {
+      ok = (ctx.camera != nullptr) && ctx.camera->start();
+      if (!ok) core::copyText(status_.last_error, sizeof(status_.last_error), "camera_start_failed");
+
+    } else if (core::equalsIgnoreCase(id, "dictaphone")) {
+      ok = (ctx.media != nullptr) && ctx.media->startRecording(30U, nullptr);
+      if (!ok) core::copyText(status_.last_error, sizeof(status_.last_error), "record_start_failed");
+
+    } else if (core::equalsIgnoreCase(id, "flashlight")) {
+      ok = (ctx.hardware != nullptr) && ctx.hardware->setManualLed(255U, 255U, 255U, 120U, false);
+      if (!ok) core::copyText(status_.last_error, sizeof(status_.last_error), "flashlight_start_failed");
+
+    } else if (core::equalsIgnoreCase(id, "audio_player")    ||
+               core::equalsIgnoreCase(id, "audiobook_player") ||
+               core::equalsIgnoreCase(id, "kids_webradio")    ||
+               core::equalsIgnoreCase(id, "kids_podcast")     ||
+               core::equalsIgnoreCase(id, "kids_music")) {
+      ok = (ctx.audio != nullptr) && ctx.audio->play("/apps/audio_player/audio/default.mp3");
+      if (!ok) core::copyText(status_.last_error, sizeof(status_.last_error), "audio_start_failed");
     }
 
-    if (!ok) {
-      status_.state = AppRuntimeState::kFailed;
-      return false;
-    }
-    status_.state = AppRuntimeState::kRunning;
-    copyText(status_.last_event, sizeof(status_.last_event), "begin");
-    return true;
+    status_.state = ok ? AppRuntimeState::kRunning : AppRuntimeState::kFailed;
+    if (ok) core::copyText(status_.last_event, sizeof(status_.last_event), "begin");
+    return ok;
   }
 
   void tick(uint32_t now_ms) override {
     status_.last_tick_ms = now_ms;
-    status_.tick_count += 1U;
+    status_.tick_count  += 1U;
   }
 
   void handleAction(const AppAction& action) override {
-    copyText(status_.last_event, sizeof(status_.last_event), action.name);
-    if (status_.state != AppRuntimeState::kRunning) {
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "play")) {
-      if (context_.media != nullptr && action.payload[0] != '\0') {
-        if (!context_.media->play(action.payload, context_.audio)) {
-          copyText(status_.last_error, sizeof(status_.last_error), "play_failed");
+    core::copyText(status_.last_event, sizeof(status_.last_event), action.name);
+    if (status_.state != AppRuntimeState::kRunning) return;
+
+    if (core::equalsIgnoreCase(action.name, "play")) {
+      if (ctx_.media != nullptr && action.payload[0] != '\0') {
+        if (!ctx_.media->play(action.payload, ctx_.audio)) {
+          core::copyText(status_.last_error, sizeof(status_.last_error), "play_failed");
         }
       }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "stop")) {
-      if (context_.media != nullptr) {
-        context_.media->stop(context_.audio);
-      } else if (context_.audio != nullptr) {
-        context_.audio->stop();
+    } else if (core::equalsIgnoreCase(action.name, "stop")) {
+      if (ctx_.media != nullptr) {
+        ctx_.media->stop(ctx_.audio);
+      } else if (ctx_.audio != nullptr) {
+        ctx_.audio->stop();
       }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "record_start")) {
+    } else if (core::equalsIgnoreCase(action.name, "record_start")) {
       uint16_t seconds = static_cast<uint16_t>(std::strtoul(action.payload, nullptr, 10));
-      if (seconds == 0U) {
-        seconds = 30U;
+      if (seconds == 0U) seconds = 30U;
+      if (ctx_.media != nullptr && !ctx_.media->startRecording(seconds, nullptr)) {
+        core::copyText(status_.last_error, sizeof(status_.last_error), "record_start_failed");
       }
-      if (context_.media != nullptr && !context_.media->startRecording(seconds, nullptr)) {
-        copyText(status_.last_error, sizeof(status_.last_error), "record_start_failed");
-      }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "record_stop")) {
-      if (context_.media != nullptr) {
-        context_.media->stopRecording();
-      }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "snapshot")) {
-      if (context_.camera != nullptr) {
+    } else if (core::equalsIgnoreCase(action.name, "record_stop")) {
+      if (ctx_.media != nullptr) ctx_.media->stopRecording();
+    } else if (core::equalsIgnoreCase(action.name, "snapshot")) {
+      if (ctx_.camera != nullptr) {
         String out_path;
-        if (!context_.camera->snapshotToFile(nullptr, &out_path)) {
-          copyText(status_.last_error, sizeof(status_.last_error), "snapshot_failed");
+        if (!ctx_.camera->snapshotToFile(nullptr, &out_path)) {
+          core::copyText(status_.last_error, sizeof(status_.last_error), "snapshot_failed");
         }
       }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "light_on")) {
-      if (context_.hardware != nullptr &&
-          !context_.hardware->setManualLed(255U, 255U, 255U, 120U, false)) {
-        copyText(status_.last_error, sizeof(status_.last_error), "light_on_failed");
+    } else if (core::equalsIgnoreCase(action.name, "light_on")) {
+      if (ctx_.hardware != nullptr &&
+          !ctx_.hardware->setManualLed(255U, 255U, 255U, 120U, false)) {
+        core::copyText(status_.last_error, sizeof(status_.last_error), "light_on_failed");
       }
-      return;
-    }
-    if (equalsIgnoreCase(action.name, "light_off")) {
-      if (context_.hardware != nullptr) {
-        context_.hardware->clearManualLed();
-      }
-      return;
+    } else if (core::equalsIgnoreCase(action.name, "light_off")) {
+      if (ctx_.hardware != nullptr) ctx_.hardware->clearManualLed();
     }
   }
 
   void end() override {
-    if (context_.descriptor == nullptr) {
+    if (ctx_.descriptor == nullptr) {
       status_.state = AppRuntimeState::kIdle;
       return;
     }
-    const char* id = context_.descriptor->id;
-    if (equalsIgnoreCase(id, "camera_video") || equalsIgnoreCase(id, "qr_scanner")) {
-      if (context_.camera != nullptr) {
-        context_.camera->stop();
-      }
-    } else if (equalsIgnoreCase(id, "dictaphone")) {
-      if (context_.media != nullptr) {
-        context_.media->stopRecording();
-      }
-    } else if (equalsIgnoreCase(id, "flashlight")) {
-      if (context_.hardware != nullptr) {
-        context_.hardware->clearManualLed();
-      }
-    } else if (equalsIgnoreCase(id, "audio_player") ||
-               equalsIgnoreCase(id, "audiobook_player") ||
-               equalsIgnoreCase(id, "kids_webradio") ||
-               equalsIgnoreCase(id, "kids_podcast") ||
-               equalsIgnoreCase(id, "kids_music")) {
-      if (context_.audio != nullptr) {
-        context_.audio->stop();
-      }
+    const char* id = ctx_.descriptor->id;
+
+    if (core::equalsIgnoreCase(id, "camera_video") ||
+        core::equalsIgnoreCase(id, "qr_scanner")) {
+      if (ctx_.camera != nullptr) ctx_.camera->stop();
+
+    } else if (core::equalsIgnoreCase(id, "dictaphone")) {
+      if (ctx_.media != nullptr) ctx_.media->stopRecording();
+
+    } else if (core::equalsIgnoreCase(id, "flashlight")) {
+      if (ctx_.hardware != nullptr) ctx_.hardware->clearManualLed();
+
+    } else if (core::equalsIgnoreCase(id, "audio_player")    ||
+               core::equalsIgnoreCase(id, "audiobook_player") ||
+               core::equalsIgnoreCase(id, "kids_webradio")    ||
+               core::equalsIgnoreCase(id, "kids_podcast")     ||
+               core::equalsIgnoreCase(id, "kids_music")) {
+      if (ctx_.audio != nullptr) ctx_.audio->stop();
     }
+
     status_.state = AppRuntimeState::kIdle;
-    copyText(status_.last_event, sizeof(status_.last_event), "end");
+    core::copyText(status_.last_event, sizeof(status_.last_event), "end");
   }
 
-  AppRuntimeStatus status() const override {
-    return status_;
-  }
+  AppRuntimeStatus status() const override { return status_; }
 
  private:
-  static void copyText(char* out, size_t out_size, const char* text) {
-    if (out == nullptr || out_size == 0U) {
-      return;
-    }
-    if (text == nullptr) {
-      out[0] = '\0';
-      return;
-    }
-    std::strncpy(out, text, out_size - 1U);
-    out[out_size - 1U] = '\0';
-  }
-
-  AppContext context_ = {};
+  AppContext       ctx_    = {};
   AppRuntimeStatus status_ = {};
 };
 
-void updateRuntimePerfCounters(AppRuntimeStatus* status, uint32_t tick_us) {
-  if (status == nullptr) {
-    return;
-  }
-  if (tick_us > status->max_tick_us) {
-    status->max_tick_us = tick_us;
-  }
-  if (status->avg_tick_us == 0U) {
-    status->avg_tick_us = tick_us;
-  } else {
-    status->avg_tick_us = ((status->avg_tick_us * 7U) + tick_us) / 8U;
-  }
-  status->heap_free = ESP.getFreeHeap();
-#if defined(ARDUINO_ARCH_ESP32)
-  status->psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-#else
-  status->psram_free = 0U;
-#endif
-}
-
 }  // namespace
 
+// ============================================================================
+// AppRuntimeManager
+// ============================================================================
+
 void AppRuntimeManager::configure(AppRegistry* registry, const AppContext& context) {
-  registry_ = registry;
-  context_ = context;
+  registry_           = registry;
+  context_            = context;
   module_.reset();
   current_descriptor_ = nullptr;
-  status_ = {};
+  status_             = {};
 }
 
 bool AppRuntimeManager::startApp(const AppStartRequest& request, uint32_t now_ms) {
   if (registry_ == nullptr || request.id[0] == '\0') {
-    copyText(status_.last_error, sizeof(status_.last_error), "app_registry_unavailable");
+    core::copyText(status_.last_error, sizeof(status_.last_error), "app_registry_unavailable");
     status_.state = AppRuntimeState::kFailed;
     return false;
   }
+
   const AppDescriptor* descriptor = registry_->find(request.id);
   if (descriptor == nullptr) {
-    copyText(status_.last_error, sizeof(status_.last_error), "app_not_found");
+    core::copyText(status_.last_error, sizeof(status_.last_error), "app_not_found");
     status_.state = AppRuntimeState::kFailed;
     return false;
   }
   if (!descriptor->enabled) {
-    copyText(status_.last_error, sizeof(status_.last_error), "app_disabled");
+    core::copyText(status_.last_error, sizeof(status_.last_error), "app_disabled");
     status_.state = AppRuntimeState::kFailed;
     return false;
   }
 
-  AppStopRequest stop_request = {};
-  copyText(stop_request.id, sizeof(stop_request.id), descriptor->id);
-  copyText(stop_request.reason, sizeof(stop_request.reason), "switch");
-  (void)stopApp(stop_request, now_ms);
+  // Stop any currently running app.
+  AppStopRequest stop_req = {};
+  core::copyText(stop_req.id,     sizeof(stop_req.id),     descriptor->id);
+  core::copyText(stop_req.reason, sizeof(stop_req.reason), "switch");
+  (void)stopApp(stop_req, now_ms);
 
   status_ = {};
-  copyText(status_.id, sizeof(status_.id), descriptor->id);
-  copyText(status_.mode, sizeof(status_.mode), request.mode);
-  copyText(status_.source, sizeof(status_.source), request.source);
-  status_.state = AppRuntimeState::kStarting;
-  status_.started_at_ms = now_ms;
+  core::copyText(status_.id,     sizeof(status_.id),     descriptor->id);
+  core::copyText(status_.mode,   sizeof(status_.mode),   request.mode);
+  core::copyText(status_.source, sizeof(status_.source), request.source);
+  status_.state             = AppRuntimeState::kStarting;
+  status_.started_at_ms     = now_ms;
   status_.required_cap_mask = descriptor->required_capabilities;
+
   if (context_.resource != nullptr) {
     const uint32_t req = descriptor->required_capabilities;
     if (appCapabilityMaskHas(req, CAP_AUDIO_IN)) {
       context_.resource->setProfile(runtime::resource::ResourceProfile::kGfxPlusMic);
     } else if (appCapabilityMaskHas(req, CAP_CAMERA)) {
       context_.resource->setProfile(runtime::resource::ResourceProfile::kGfxPlusCamSnapshot);
+      if (context_.hardware != nullptr) {
+        context_.hardware->setMicRuntimeEnabled(false);
+      }
+      if (context_.audio != nullptr) {
+        context_.audio->releaseOutputResources();
+      }
     }
   }
+
   status_.missing_cap_mask = evaluateMissingCapabilities(*descriptor);
   if (status_.missing_cap_mask != 0U) {
-    copyText(status_.last_error, sizeof(status_.last_error), "resource_busy");
-    status_.state = AppRuntimeState::kFailed;
+    core::copyText(status_.last_error, sizeof(status_.last_error), "resource_busy");
+    status_.state       = AppRuntimeState::kFailed;
     current_descriptor_ = descriptor;
     return false;
   }
+
   if (descriptor->supports_offline &&
       descriptor->asset_manifest[0] != '\0' &&
       context_.storage != nullptr &&
       !context_.storage->fileExists(descriptor->asset_manifest)) {
-    copyText(status_.last_error, sizeof(status_.last_error), "missing_asset");
-    status_.state = AppRuntimeState::kFailed;
+    core::copyText(status_.last_error, sizeof(status_.last_error), "missing_asset");
+    status_.state       = AppRuntimeState::kFailed;
     current_descriptor_ = descriptor;
     return false;
   }
@@ -303,21 +275,24 @@ bool AppRuntimeManager::startApp(const AppStartRequest& request, uint32_t now_ms
   if (!module_) {
     module_.reset(new BasicAppModule());
   }
-  AppContext run_context = context_;
-  run_context.descriptor = descriptor;
-  const bool ok = module_->begin(run_context);
+
+  AppContext run_ctx   = context_;
+  run_ctx.descriptor  = descriptor;
+  const bool ok       = module_->begin(run_ctx);
+
   status_ = module_->status();
-  copyText(status_.mode, sizeof(status_.mode), request.mode);
-  copyText(status_.source, sizeof(status_.source), request.source);
+  core::copyText(status_.mode,   sizeof(status_.mode),   request.mode);
+  core::copyText(status_.source, sizeof(status_.source), request.source);
   status_.required_cap_mask = descriptor->required_capabilities;
-  status_.missing_cap_mask = 0U;
+  status_.missing_cap_mask  = 0U;
   updateRuntimePerfCounters(&status_, 0U);
   current_descriptor_ = descriptor;
+
   if (ok && context_.ui != nullptr && descriptor->entry_screen[0] != '\0') {
-    UiSceneFrame frame = {};
-    frame.screen_scene_id = descriptor->entry_screen;
-    frame.step_id = descriptor->id;
-    frame.audio_playing = (context_.audio != nullptr) ? context_.audio->isPlaying() : false;
+    UiSceneFrame frame       = {};
+    frame.screen_scene_id   = descriptor->entry_screen;
+    frame.step_id           = descriptor->id;
+    frame.audio_playing     = (context_.audio != nullptr) && context_.audio->isPlaying();
     context_.ui->submitSceneFrame(frame);
   }
   return ok;
@@ -326,23 +301,29 @@ bool AppRuntimeManager::startApp(const AppStartRequest& request, uint32_t now_ms
 bool AppRuntimeManager::stopApp(const AppStopRequest& request, uint32_t now_ms) {
   (void)now_ms;
   (void)request;
-  if (!module_) {
-    return true;
-  }
+  if (!module_) return true;
+  const bool restoring_camera_sidecars =
+      current_descriptor_ != nullptr &&
+      appCapabilityMaskHas(current_descriptor_->required_capabilities, CAP_CAMERA);
+
   status_.state = AppRuntimeState::kStopping;
   module_->end();
   status_ = module_->status();
   module_.reset();
   current_descriptor_ = nullptr;
-  copyText(status_.id, sizeof(status_.id), "");
-  status_.missing_cap_mask = 0U;
+  core::copyText(status_.id, sizeof(status_.id), "");
+  status_.missing_cap_mask  = 0U;
   status_.required_cap_mask = 0U;
+
   if (context_.ui != nullptr) {
-    UiSceneFrame frame = {};
-    frame.screen_scene_id = "SCENE_READY";
-    frame.step_id = "APP_IDLE";
-    frame.audio_playing = (context_.audio != nullptr) ? context_.audio->isPlaying() : false;
+    UiSceneFrame frame     = {};
+    frame.screen_scene_id  = "SCENE_READY";
+    frame.step_id          = "APP_IDLE";
+    frame.audio_playing    = (context_.audio != nullptr) && context_.audio->isPlaying();
     context_.ui->submitSceneFrame(frame);
+  }
+  if (restoring_camera_sidecars && context_.audio != nullptr) {
+    context_.audio->restoreOutputResources();
   }
   return true;
 }
@@ -350,44 +331,51 @@ bool AppRuntimeManager::stopApp(const AppStopRequest& request, uint32_t now_ms) 
 bool AppRuntimeManager::handleAction(const AppAction& action, uint32_t now_ms) {
   (void)now_ms;
   if (!module_) {
-    copyText(status_.last_error, sizeof(status_.last_error), "no_app_running");
+    core::copyText(status_.last_error, sizeof(status_.last_error), "no_app_running");
     status_.state = AppRuntimeState::kFailed;
     return false;
   }
-  if (action.id[0] != '\0' && !equalsIgnoreCase(action.id, status_.id)) {
-    copyText(status_.last_error, sizeof(status_.last_error), "app_id_mismatch");
+  if (action.id[0] != '\0' && !core::equalsIgnoreCase(action.id, status_.id)) {
+    core::copyText(status_.last_error, sizeof(status_.last_error), "app_id_mismatch");
     return false;
   }
-  char mode[sizeof(status_.mode)] = {0};
-  char source[sizeof(status_.source)] = {0};
-  copyText(mode, sizeof(mode), status_.mode);
-  copyText(source, sizeof(source), status_.source);
+
+  char mode[sizeof(status_.mode)]     = {};
+  char source[sizeof(status_.source)] = {};
+  core::copyText(mode,   sizeof(mode),   status_.mode);
+  core::copyText(source, sizeof(source), status_.source);
+
   module_->handleAction(action);
   status_ = module_->status();
-  copyText(status_.mode, sizeof(status_.mode), mode);
-  copyText(status_.source, sizeof(status_.source), source);
-  status_.required_cap_mask = (current_descriptor_ != nullptr) ? current_descriptor_->required_capabilities : 0U;
-  status_.missing_cap_mask = (current_descriptor_ != nullptr) ? evaluateMissingCapabilities(*current_descriptor_) : 0U;
+  core::copyText(status_.mode,   sizeof(status_.mode),   mode);
+  core::copyText(status_.source, sizeof(status_.source), source);
+  status_.required_cap_mask = (current_descriptor_ != nullptr)
+                                  ? current_descriptor_->required_capabilities : 0U;
+  status_.missing_cap_mask  = (current_descriptor_ != nullptr)
+                                  ? evaluateMissingCapabilities(*current_descriptor_) : 0U;
   updateRuntimePerfCounters(&status_, 0U);
   return true;
 }
 
 void AppRuntimeManager::tick(uint32_t now_ms) {
-  if (!module_) {
-    return;
-  }
-  char mode[sizeof(status_.mode)] = {0};
-  char source[sizeof(status_.source)] = {0};
-  copyText(mode, sizeof(mode), status_.mode);
-  copyText(source, sizeof(source), status_.source);
-  const uint32_t start_us = micros();
+  if (!module_) return;
+
+  char mode[sizeof(status_.mode)]     = {};
+  char source[sizeof(status_.source)] = {};
+  core::copyText(mode,   sizeof(mode),   status_.mode);
+  core::copyText(source, sizeof(source), status_.source);
+
+  const uint32_t start_us  = micros();
   module_->tick(now_ms);
   const uint32_t elapsed_us = micros() - start_us;
+
   status_ = module_->status();
-  copyText(status_.mode, sizeof(status_.mode), mode);
-  copyText(status_.source, sizeof(status_.source), source);
-  status_.required_cap_mask = (current_descriptor_ != nullptr) ? current_descriptor_->required_capabilities : 0U;
-  status_.missing_cap_mask = (current_descriptor_ != nullptr) ? evaluateMissingCapabilities(*current_descriptor_) : 0U;
+  core::copyText(status_.mode,   sizeof(status_.mode),   mode);
+  core::copyText(status_.source, sizeof(status_.source), source);
+  status_.required_cap_mask = (current_descriptor_ != nullptr)
+                                  ? current_descriptor_->required_capabilities : 0U;
+  status_.missing_cap_mask  = (current_descriptor_ != nullptr)
+                                  ? evaluateMissingCapabilities(*current_descriptor_) : 0U;
   updateRuntimePerfCounters(&status_, elapsed_us);
 }
 
@@ -402,87 +390,48 @@ const AppDescriptor* AppRuntimeManager::currentDescriptor() const {
 uint32_t AppRuntimeManager::evaluateMissingCapabilities(const AppDescriptor& descriptor) const {
   uint32_t missing = 0U;
   const uint32_t req = descriptor.required_capabilities;
-  runtime::resource::ResourceCoordinator* resource = context_.resource;
+  runtime::resource::ResourceCoordinator* res = context_.resource;
 
-  if (appCapabilityMaskHas(req, CAP_AUDIO_OUT) && context_.audio == nullptr) {
-    missing |= CAP_AUDIO_OUT;
-  }
-  if (appCapabilityMaskHas(req, CAP_AUDIO_OUT) && resource != nullptr &&
-      !resource->allowsCapability(runtime::resource::ResourceCapability::kAudioOut)) {
-    missing |= CAP_AUDIO_OUT;
+  auto lacking = [&](runtime::resource::ResourceCapability cap) -> bool {
+    return res != nullptr && !res->allowsCapability(cap);
+  };
+
+  if (appCapabilityMaskHas(req, CAP_AUDIO_OUT)) {
+    if (context_.audio == nullptr || lacking(runtime::resource::ResourceCapability::kAudioOut))
+      missing |= CAP_AUDIO_OUT;
   }
   if (appCapabilityMaskHas(req, CAP_AUDIO_IN)) {
-    const bool has_audio_in = (context_.media != nullptr) ||
-                              (context_.hardware != nullptr && context_.hardware->snapshotRef().mic_ready);
-    if (!has_audio_in) {
+    const bool has = (context_.media != nullptr) ||
+                     (context_.hardware != nullptr && context_.hardware->snapshotRef().mic_ready);
+    if (!has || lacking(runtime::resource::ResourceCapability::kAudioIn))
       missing |= CAP_AUDIO_IN;
-    }
-    if (resource != nullptr &&
-        !resource->allowsCapability(runtime::resource::ResourceCapability::kAudioIn)) {
-      missing |= CAP_AUDIO_IN;
-    }
   }
   if (appCapabilityMaskHas(req, CAP_CAMERA)) {
-    const bool has_camera = (context_.camera != nullptr && context_.camera->snapshot().supported);
-    const bool allowed_by_profile =
-        (resource == nullptr) || resource->allowsCapability(runtime::resource::ResourceCapability::kCamera);
-    if (!has_camera || !allowed_by_profile) {
+    const bool has = (context_.camera != nullptr && context_.camera->snapshot().supported);
+    if (!has || lacking(runtime::resource::ResourceCapability::kCamera))
       missing |= CAP_CAMERA;
-    }
   }
   if (appCapabilityMaskHas(req, CAP_LED)) {
-    const bool has_led = (context_.hardware != nullptr && context_.hardware->snapshotRef().ws2812_ready);
-    if (!has_led) {
+    const bool has = (context_.hardware != nullptr && context_.hardware->snapshotRef().ws2812_ready);
+    if (!has || lacking(runtime::resource::ResourceCapability::kLed))
       missing |= CAP_LED;
-    }
-    if (resource != nullptr &&
-        !resource->allowsCapability(runtime::resource::ResourceCapability::kLed)) {
-      missing |= CAP_LED;
-    }
   }
   if (appCapabilityMaskHas(req, CAP_WIFI)) {
-    if (context_.network == nullptr) {
+    if (context_.network == nullptr || lacking(runtime::resource::ResourceCapability::kWifi))
       missing |= CAP_WIFI;
-    }
-    if (resource != nullptr &&
-        !resource->allowsCapability(runtime::resource::ResourceCapability::kWifi)) {
-      missing |= CAP_WIFI;
-    }
   }
-  if (appCapabilityMaskHas(req, CAP_STORAGE_SD) &&
-      (context_.storage == nullptr || !context_.storage->hasSdCard())) {
-    missing |= CAP_STORAGE_SD;
+  if (appCapabilityMaskHas(req, CAP_STORAGE_SD)) {
+    const bool has = (context_.storage != nullptr && context_.storage->hasSdCard());
+    if (!has || lacking(runtime::resource::ResourceCapability::kStorageSd))
+      missing |= CAP_STORAGE_SD;
   }
-  if (appCapabilityMaskHas(req, CAP_STORAGE_SD) && resource != nullptr &&
-      !resource->allowsCapability(runtime::resource::ResourceCapability::kStorageSd)) {
-    missing |= CAP_STORAGE_SD;
+  if (appCapabilityMaskHas(req, CAP_STORAGE_FS)) {
+    if (context_.storage == nullptr || lacking(runtime::resource::ResourceCapability::kStorageFs))
+      missing |= CAP_STORAGE_FS;
   }
-  if (appCapabilityMaskHas(req, CAP_STORAGE_FS) && context_.storage == nullptr) {
-    missing |= CAP_STORAGE_FS;
+  if (appCapabilityMaskHas(req, CAP_GPU_UI)) {
+    if (context_.ui == nullptr || lacking(runtime::resource::ResourceCapability::kGpuUi))
+      missing |= CAP_GPU_UI;
   }
-  if (appCapabilityMaskHas(req, CAP_STORAGE_FS) && resource != nullptr &&
-      !resource->allowsCapability(runtime::resource::ResourceCapability::kStorageFs)) {
-    missing |= CAP_STORAGE_FS;
-  }
-  if (appCapabilityMaskHas(req, CAP_GPU_UI) && context_.ui == nullptr) {
-    missing |= CAP_GPU_UI;
-  }
-  if (appCapabilityMaskHas(req, CAP_GPU_UI) && resource != nullptr &&
-      !resource->allowsCapability(runtime::resource::ResourceCapability::kGpuUi)) {
-    missing |= CAP_GPU_UI;
-  }
-
   return missing;
-}
-
-void AppRuntimeManager::copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
 }

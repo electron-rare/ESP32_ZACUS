@@ -280,8 +280,13 @@ void HardwareManager::setMicRuntimeEnabled(bool enabled) {
     return;
   }
   mic_enabled_runtime_ = enabled;
+  if (mic_enabled_runtime_ && !mic_driver_ready_) {
+    mic_driver_ready_ = beginMic();
+  }
   snapshot_.mic_ready = mic_enabled_runtime_ && mic_driver_ready_;
   if (!mic_enabled_runtime_) {
+    endMic();
+    snapshot_.mic_ready = false;
     snapshot_.mic_level_percent = 0U;
     snapshot_.mic_peak = 0U;
     snapshot_.mic_freq_hz = 0U;
@@ -317,6 +322,12 @@ void HardwareManager::setSceneSingleRandomBlink(bool enabled,
 }
 
 bool HardwareManager::beginMic() {
+  if (mic_driver_ready_) {
+    return true;
+  }
+  if (!mic_enabled_runtime_) {
+    return false;
+  }
   i2s_config_t config = {};
   config.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX);
   config.sample_rate = kMicSampleRate;
@@ -351,6 +362,14 @@ bool HardwareManager::beginMic() {
 
   mic_driver_ready_ = true;
   return true;
+}
+
+void HardwareManager::endMic() {
+  if (!mic_driver_ready_) {
+    return;
+  }
+  i2s_driver_uninstall(kMicPort);
+  mic_driver_ready_ = false;
 }
 
 void HardwareManager::updateMic(uint32_t now_ms) {

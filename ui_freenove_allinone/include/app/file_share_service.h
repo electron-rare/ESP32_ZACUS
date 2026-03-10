@@ -34,7 +34,6 @@ class FileShareService {
                     String* out_error) const;
 
  private:
-  static void copyText(char* out, size_t out_size, const char* text);
   bool ensureSharedDirs() const;
   bool resolveIncomingPath(const char* requested_path, String* out_full_path) const;
 

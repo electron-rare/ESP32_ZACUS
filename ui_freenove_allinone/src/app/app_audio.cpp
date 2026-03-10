@@ -1,6 +1,7 @@
 // app_audio.cpp - Audio Player Implementation
 #include "app/app_audio.h"
 #include "audio_manager.h"
+#include "core/str_utils.h"
 
 AppAudio g_app_audio;
 
@@ -54,7 +55,7 @@ void AppAudio::onAction(const AppAction& action) {
   } else if (strcmp(action.name, "stop") == 0) {
     stop();
   } else if (strcmp(action.name, "volume") == 0) {
-    int vol = atoi(action.payload);
+    int vol = static_cast<int>(strtol(action.payload, nullptr, 10));
     setVolume(constrain(vol, 0, 100));
   }
 }
@@ -65,8 +66,7 @@ bool AppAudio::play(const char* filepath) {
     return false;
   }
   
-  strncpy(current_file_, filepath, sizeof(current_file_) - 1);
-  current_file_[sizeof(current_file_) - 1] = '\0';
+  core::copyText(current_file_, sizeof(current_file_), filepath);
   
   playback_ms_ = 0;
   duration_ms_ = 30000;  // Assume 30 seconds for demo
@@ -74,9 +74,8 @@ bool AppAudio::play(const char* filepath) {
   
   Serial.printf("[APP_AUDIO] Playing: %s (vol=%u%%)\n", current_file_, volume_percent_);
   
-  // TODO: Integrate with AudioManager for actual playback
   if (context_.audio) {
-    // context_.audio->playFile(filepath);
+    context_.audio->play(filepath);
   }
   
   return true;
@@ -104,9 +103,8 @@ void AppAudio::stop() {
   
   Serial.println("[APP_AUDIO] Stopped");
   
-  // TODO: Stop playback via AudioManager
   if (context_.audio) {
-    // context_.audio->stop();
+    context_.audio->stop();
   }
 }
 
@@ -114,9 +112,8 @@ void AppAudio::setVolume(uint8_t vol_percent) {
   volume_percent_ = vol_percent;
   Serial.printf("[APP_AUDIO] Volume: %u%%\n", volume_percent_);
   
-  // TODO: Update hardware volume via AudioManager
   if (context_.audio) {
-    // context_.audio->setVolume(vol_percent);
+    context_.audio->setVolume(vol_percent);
   }
 }
 

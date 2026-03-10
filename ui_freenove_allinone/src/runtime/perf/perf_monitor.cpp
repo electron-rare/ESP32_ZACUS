@@ -47,11 +47,13 @@ const char* sectionLabel(PerfSection section) {
 }  // namespace
 
 void PerfMonitor::reset() {
+  portENTER_CRITICAL(&stats_mux_);
   for (uint8_t index = 0U; index < static_cast<uint8_t>(PerfSection::kCount); ++index) {
     sections_[index] = {};
   }
   ui_dma_flush_count_ = 0U;
   ui_sync_flush_count_ = 0U;
+  portEXIT_CRITICAL(&stats_mux_);
 }
 
 uint32_t PerfMonitor::beginSample() const {
@@ -65,15 +67,18 @@ void PerfMonitor::endSample(PerfSection section, uint32_t started_us) {
 
 void PerfMonitor::noteUiFlush(bool dma_used, uint32_t elapsed_us) {
   noteSection(PerfSection::kUiFlush, elapsed_us);
+  portENTER_CRITICAL(&stats_mux_);
   if (dma_used) {
     ++ui_dma_flush_count_;
   } else {
     ++ui_sync_flush_count_;
   }
+  portEXIT_CRITICAL(&stats_mux_);
 }
 
 PerfSnapshot PerfMonitor::snapshot() const {
   PerfSnapshot out = {};
+  portENTER_CRITICAL(&stats_mux_);
   out.loop = sections_[static_cast<uint8_t>(PerfSection::kLoop)];
   out.ui_tick = sections_[static_cast<uint8_t>(PerfSection::kUiTick)];
   out.ui_flush = sections_[static_cast<uint8_t>(PerfSection::kUiFlush)];
@@ -82,6 +87,7 @@ PerfSnapshot PerfMonitor::snapshot() const {
   out.audio_update = sections_[static_cast<uint8_t>(PerfSection::kAudioUpdate)];
   out.ui_dma_flush_count = ui_dma_flush_count_;
   out.ui_sync_flush_count = ui_sync_flush_count_;
+  portEXIT_CRITICAL(&stats_mux_);
   return out;
 }
 
@@ -112,12 +118,14 @@ void PerfMonitor::noteSection(PerfSection section, uint32_t elapsed_us) {
   if (index >= static_cast<uint8_t>(PerfSection::kCount)) {
     return;
   }
+  portENTER_CRITICAL(&stats_mux_);
   PerfSectionStats& stats = sections_[index];
   ++stats.count;
   stats.total_us += static_cast<uint64_t>(elapsed_us);
   if (elapsed_us > stats.max_us) {
     stats.max_us = elapsed_us;
   }
+  portEXIT_CRITICAL(&stats_mux_);
 }
 
 uint32_t PerfMonitor::elapsedUs(uint32_t started_us, uint32_t ended_us) {

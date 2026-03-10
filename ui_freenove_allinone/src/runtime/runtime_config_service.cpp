@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstring>
+#include "core/str_utils.h"
 
 namespace {
 
@@ -12,18 +13,6 @@ constexpr const char* kDefaultWifiHostname = "zacus-freenove";
 constexpr const char* kDefaultWifiSsid = "";
 constexpr const char* kDefaultWifiPassword = "";
 constexpr uint16_t kMaxLaToleranceHz = 10U;
-
-void copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
 
 void toLowerAsciiInPlace(char* text) {
   if (text == nullptr) {
@@ -58,7 +47,7 @@ void addEspNowBootPeer(RuntimeNetworkConfig* network_cfg, const char* mac_text) 
   if (network_cfg->espnow_boot_peer_count >= RuntimeNetworkConfig::kMaxEspNowBootPeers) {
     return;
   }
-  copyText(network_cfg->espnow_boot_peers[network_cfg->espnow_boot_peer_count],
+  core::copyText(network_cfg->espnow_boot_peers[network_cfg->espnow_boot_peer_count],
            sizeof(network_cfg->espnow_boot_peers[network_cfg->espnow_boot_peer_count]),
            mac_text);
   ++network_cfg->espnow_boot_peer_count;
@@ -68,13 +57,13 @@ void resetRuntimeNetworkConfig(RuntimeNetworkConfig* network_cfg) {
   if (network_cfg == nullptr) {
     return;
   }
-  copyText(network_cfg->hostname, sizeof(network_cfg->hostname), kDefaultWifiHostname);
-  copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), kDefaultWifiSsid);
-  copyText(network_cfg->wifi_test_password, sizeof(network_cfg->wifi_test_password), kDefaultWifiPassword);
-  copyText(network_cfg->local_ssid, sizeof(network_cfg->local_ssid), kDefaultWifiSsid);
-  copyText(network_cfg->local_password, sizeof(network_cfg->local_password), kDefaultWifiPassword);
-  copyText(network_cfg->ap_default_ssid, sizeof(network_cfg->ap_default_ssid), "Freenove-Setup");
-  copyText(network_cfg->ap_default_password, sizeof(network_cfg->ap_default_password), kDefaultWifiPassword);
+  core::copyText(network_cfg->hostname, sizeof(network_cfg->hostname), kDefaultWifiHostname);
+  core::copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), kDefaultWifiSsid);
+  core::copyText(network_cfg->wifi_test_password, sizeof(network_cfg->wifi_test_password), kDefaultWifiPassword);
+  core::copyText(network_cfg->local_ssid, sizeof(network_cfg->local_ssid), kDefaultWifiSsid);
+  core::copyText(network_cfg->local_password, sizeof(network_cfg->local_password), kDefaultWifiPassword);
+  core::copyText(network_cfg->ap_default_ssid, sizeof(network_cfg->ap_default_ssid), "Freenove-Setup");
+  core::copyText(network_cfg->ap_default_password, sizeof(network_cfg->ap_default_password), kDefaultWifiPassword);
   network_cfg->force_ap_if_not_local = false;
   network_cfg->pause_local_retry_when_ap_client = false;
   network_cfg->local_retry_ms = RuntimeNetworkConfig::kDefaultLocalRetryMs;
@@ -138,30 +127,30 @@ void RuntimeConfigService::load(StorageManager& storage,
       const bool pause_retry_when_ap_client = config["pause_local_retry_when_ap_client"] | false;
       const uint32_t local_retry_ms = config["local_retry_ms"] | RuntimeNetworkConfig::kDefaultLocalRetryMs;
       if (hostname[0] != '\0') {
-        copyText(network_cfg->hostname, sizeof(network_cfg->hostname), hostname);
+        core::copyText(network_cfg->hostname, sizeof(network_cfg->hostname), hostname);
       }
       if (local_ssid[0] != '\0') {
-        copyText(network_cfg->local_ssid, sizeof(network_cfg->local_ssid), local_ssid);
+        core::copyText(network_cfg->local_ssid, sizeof(network_cfg->local_ssid), local_ssid);
       }
       if (local_password[0] != '\0') {
-        copyText(network_cfg->local_password, sizeof(network_cfg->local_password), local_password);
+        core::copyText(network_cfg->local_password, sizeof(network_cfg->local_password), local_password);
       }
       if (test_ssid[0] != '\0') {
-        copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), test_ssid);
+        core::copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), test_ssid);
       }
       if (test_password[0] != '\0') {
-        copyText(network_cfg->wifi_test_password, sizeof(network_cfg->wifi_test_password), test_password);
+        core::copyText(network_cfg->wifi_test_password, sizeof(network_cfg->wifi_test_password), test_password);
       }
       if (ap_ssid[0] != '\0') {
-        copyText(network_cfg->ap_default_ssid, sizeof(network_cfg->ap_default_ssid), ap_ssid);
+        core::copyText(network_cfg->ap_default_ssid, sizeof(network_cfg->ap_default_ssid), ap_ssid);
       }
       if (ap_password[0] != '\0') {
-        copyText(network_cfg->ap_default_password, sizeof(network_cfg->ap_default_password), ap_password);
+        core::copyText(network_cfg->ap_default_password, sizeof(network_cfg->ap_default_password), ap_password);
       }
 
       if (ap_policy[0] != '\0') {
         char policy_normalized[32] = {0};
-        copyText(policy_normalized, sizeof(policy_normalized), ap_policy);
+        core::copyText(policy_normalized, sizeof(policy_normalized), ap_policy);
         toLowerAsciiInPlace(policy_normalized);
         if (std::strcmp(policy_normalized, "force_if_not_local") == 0) {
           network_cfg->force_ap_if_not_local = true;
@@ -177,10 +166,10 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
 
       if (test_ssid[0] == '\0' && network_cfg->local_ssid[0] != '\0') {
-        copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), network_cfg->local_ssid);
+        core::copyText(network_cfg->wifi_test_ssid, sizeof(network_cfg->wifi_test_ssid), network_cfg->local_ssid);
       }
       if (test_password[0] == '\0' && network_cfg->local_password[0] != '\0') {
-        copyText(network_cfg->wifi_test_password,
+        core::copyText(network_cfg->wifi_test_password,
                  sizeof(network_cfg->wifi_test_password),
                  network_cfg->local_password);
       }
@@ -246,7 +235,7 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
       const char* mic_event_name = config["mic_event_name"] | "";
       if (mic_event_name[0] != '\0') {
-        copyText(hardware_cfg->mic_event_name, sizeof(hardware_cfg->mic_event_name), mic_event_name);
+        core::copyText(hardware_cfg->mic_event_name, sizeof(hardware_cfg->mic_event_name), mic_event_name);
       }
       if (config["la_trigger_enabled"].is<bool>()) {
         hardware_cfg->mic_la_trigger_enabled = config["la_trigger_enabled"].as<bool>();
@@ -324,7 +313,7 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
       const char* la_event_name = config["la_event_name"] | "";
       if (la_event_name[0] != '\0') {
-        copyText(hardware_cfg->mic_la_event_name, sizeof(hardware_cfg->mic_la_event_name), la_event_name);
+        core::copyText(hardware_cfg->mic_la_event_name, sizeof(hardware_cfg->mic_la_event_name), la_event_name);
       }
       if (config["battery_enabled"].is<bool>()) {
         hardware_cfg->battery_enabled = config["battery_enabled"].as<bool>();
@@ -338,7 +327,7 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
       const char* battery_event_name = config["battery_low_event_name"] | "";
       if (battery_event_name[0] != '\0') {
-        copyText(
+        core::copyText(
             hardware_cfg->battery_low_event_name, sizeof(hardware_cfg->battery_low_event_name), battery_event_name);
       }
     } else {
@@ -357,7 +346,7 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
       const char* frame_size = config["frame_size"] | "";
       if (frame_size[0] != '\0') {
-        copyText(camera_cfg->frame_size, sizeof(camera_cfg->frame_size), frame_size);
+        core::copyText(camera_cfg->frame_size, sizeof(camera_cfg->frame_size), frame_size);
       }
       if (config["jpeg_quality"].is<unsigned int>()) {
         camera_cfg->jpeg_quality = static_cast<uint8_t>(config["jpeg_quality"].as<unsigned int>());
@@ -370,7 +359,7 @@ void RuntimeConfigService::load(StorageManager& storage,
       }
       const char* snapshot_dir = config["snapshot_dir"] | "";
       if (snapshot_dir[0] != '\0') {
-        copyText(camera_cfg->snapshot_dir, sizeof(camera_cfg->snapshot_dir), snapshot_dir);
+        core::copyText(camera_cfg->snapshot_dir, sizeof(camera_cfg->snapshot_dir), snapshot_dir);
       }
     } else {
       Serial.printf("[CAM] APP_CAMERA invalid json (%s)\n", error.c_str());
@@ -406,13 +395,13 @@ void RuntimeConfigService::load(StorageManager& storage,
       const char* picture_dir = config["picture_dir"] | "";
       const char* record_dir = config["record_dir"] | "";
       if (music_dir[0] != '\0') {
-        copyText(media_cfg->music_dir, sizeof(media_cfg->music_dir), music_dir);
+        core::copyText(media_cfg->music_dir, sizeof(media_cfg->music_dir), music_dir);
       }
       if (picture_dir[0] != '\0') {
-        copyText(media_cfg->picture_dir, sizeof(media_cfg->picture_dir), picture_dir);
+        core::copyText(media_cfg->picture_dir, sizeof(media_cfg->picture_dir), picture_dir);
       }
       if (record_dir[0] != '\0') {
-        copyText(media_cfg->record_dir, sizeof(media_cfg->record_dir), record_dir);
+        core::copyText(media_cfg->record_dir, sizeof(media_cfg->record_dir), record_dir);
       }
       if (config["record_max_seconds"].is<unsigned int>()) {
         media_cfg->record_max_seconds = static_cast<uint16_t>(config["record_max_seconds"].as<unsigned int>());

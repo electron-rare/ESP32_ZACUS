@@ -1,6 +1,7 @@
 // app_timer.cpp - Timer Implementation
 #include "app/app_timer.h"
-#include "hardware_manager.h"
+#include "audio_manager.h"
+#include "core/str_utils.h"
 
 AppTimer g_app_timer;
 
@@ -44,7 +45,7 @@ void AppTimer::onAction(const AppAction& action) {
   Serial.printf("[APP_TIMER] Action: %s payload=%s\n", action.name, action.payload);
   
   if (strcmp(action.name, "start") == 0) {
-    uint32_t seconds = atoi(action.payload);
+    uint32_t seconds = static_cast<uint32_t>(strtol(action.payload, nullptr, 10));
     startCountdown(seconds);
   } else if (strcmp(action.name, "pause") == 0) {
     pause();
@@ -81,7 +82,7 @@ void AppTimer::reset() {
   running_ = false;
   remaining_ms_ = 0;
   total_ms_ = 0;
-  strncpy(display_, "00:00", sizeof(display_) - 1);
+  core::copyText(display_, sizeof(display_), "00:00");
 }
 
 void AppTimer::updateDisplay() {
@@ -92,14 +93,9 @@ void AppTimer::updateDisplay() {
 
 void AppTimer::onTimeout() {
   Serial.println("[APP_TIMER] TIMEOUT - Playing alarm");
-  
-  // Play beep alarm if buzzer available
-  if (context_.hardware) {
-    for (int i = 0; i < 5; i++) {
-      // TODO: Use buzzer/audio to play alarm sound
-      // context_.hardware->buzzer(1000, 100);  // Frequency, duration
-      delay(100);
-    }
+
+  if (context_.audio) {
+    context_.audio->play("/sounds/alarm.wav");
   }
   
   updateDisplay();

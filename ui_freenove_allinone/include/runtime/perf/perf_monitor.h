@@ -2,6 +2,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <freertos/portmacro.h>
 
 #include <cstdint>
 
@@ -48,6 +49,8 @@ class PerfMonitor {
   PerfSectionStats sections_[static_cast<uint8_t>(PerfSection::kCount)] = {};
   uint32_t ui_dma_flush_count_ = 0U;
   uint32_t ui_sync_flush_count_ = 0U;
+  // Spinlock protecting sections_ and flush counters (multi-task safe).
+  mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
 };
 
 PerfMonitor& perfMonitor();

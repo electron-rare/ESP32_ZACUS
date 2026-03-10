@@ -12,6 +12,7 @@
 
 #include "audio_manager.h"
 #include "ui_freenove_config.h"
+#include "core/str_utils.h"
 
 namespace {
 
@@ -22,37 +23,8 @@ constexpr uint16_t kRecorderChannels = 1U;
 constexpr uint32_t kRecorderCapturePeriodMs = 30U;
 constexpr size_t kRecorderRawSamples = 256U;
 
-void copyText(char* out, size_t out_size, const char* text) {
-  if (out == nullptr || out_size == 0U) {
-    return;
-  }
-  if (text == nullptr) {
-    out[0] = '\0';
-    return;
-  }
-  std::strncpy(out, text, out_size - 1U);
-  out[out_size - 1U] = '\0';
-}
-
 char toLowerAscii(char ch) {
   return static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-}
-
-bool equalsIgnoreCase(const char* lhs, const char* rhs) {
-  if (lhs == nullptr || rhs == nullptr) {
-    return false;
-  }
-  size_t index = 0U;
-  for (;; ++index) {
-    const char l = lhs[index];
-    const char r = rhs[index];
-    if (l == '\0' && r == '\0') {
-      return true;
-    }
-    if (toLowerAscii(l) != toLowerAscii(r)) {
-      return false;
-    }
-  }
 }
 
 bool isAsciiDigit(char ch) {
@@ -107,9 +79,9 @@ int compareNaturalPath(const String& lhs, const String& rhs) {
 
 bool MediaManager::begin(const Config& config) {
   config_ = config;
-  copyText(config_.music_dir, sizeof(config_.music_dir), normalizeDir(config.music_dir).c_str());
-  copyText(config_.picture_dir, sizeof(config_.picture_dir), normalizeDir(config.picture_dir).c_str());
-  copyText(config_.record_dir, sizeof(config_.record_dir), normalizeDir(config.record_dir).c_str());
+  core::copyText(config_.music_dir, sizeof(config_.music_dir), normalizeDir(config.music_dir).c_str());
+  core::copyText(config_.picture_dir, sizeof(config_.picture_dir), normalizeDir(config.picture_dir).c_str());
+  core::copyText(config_.record_dir, sizeof(config_.record_dir), normalizeDir(config.record_dir).c_str());
   if (config_.record_max_seconds == 0U) {
     config_.record_max_seconds = 30U;
   }
@@ -121,9 +93,9 @@ bool MediaManager::begin(const Config& config) {
   snapshot_.ready = true;
   snapshot_.record_simulated = false;
   snapshot_.record_limit_seconds = config_.record_max_seconds;
-  copyText(snapshot_.music_dir, sizeof(snapshot_.music_dir), config_.music_dir);
-  copyText(snapshot_.picture_dir, sizeof(snapshot_.picture_dir), config_.picture_dir);
-  copyText(snapshot_.record_dir, sizeof(snapshot_.record_dir), config_.record_dir);
+  core::copyText(snapshot_.music_dir, sizeof(snapshot_.music_dir), config_.music_dir);
+  core::copyText(snapshot_.picture_dir, sizeof(snapshot_.picture_dir), config_.picture_dir);
+  core::copyText(snapshot_.record_dir, sizeof(snapshot_.record_dir), config_.record_dir);
   ensureDir(config_.music_dir);
   ensureDir(config_.picture_dir);
   ensureDir(config_.record_dir);
@@ -222,7 +194,7 @@ bool MediaManager::play(const char* path, AudioManager* audio) {
   const bool ok = audio->play(normalized_path.c_str());
   snapshot_.playing = ok;
   if (ok) {
-    copyText(snapshot_.playing_path, sizeof(snapshot_.playing_path), normalized_path.c_str());
+    core::copyText(snapshot_.playing_path, sizeof(snapshot_.playing_path), normalized_path.c_str());
     clearLastError();
   } else {
     setLastError("media_play_failed");
@@ -271,7 +243,7 @@ bool MediaManager::startRecording(uint16_t seconds, const char* filename_hint) {
   snapshot_.record_started_ms = millis();
   snapshot_.record_elapsed_seconds = 0U;
   next_capture_ms_ = snapshot_.record_started_ms;
-  copyText(snapshot_.record_file, sizeof(snapshot_.record_file), path.c_str());
+  core::copyText(snapshot_.record_file, sizeof(snapshot_.record_file), path.c_str());
   clearLastError();
   return true;
 }
@@ -298,7 +270,7 @@ MediaManager::Snapshot MediaManager::snapshot() const {
 
 void MediaManager::setLastError(const char* message) {
   snapshot_.last_ok = false;
-  copyText(snapshot_.last_error, sizeof(snapshot_.last_error), message);
+  core::copyText(snapshot_.last_error, sizeof(snapshot_.last_error), message);
 }
 
 void MediaManager::clearLastError() {
@@ -328,13 +300,13 @@ String MediaManager::resolveKindDir(const char* kind) const {
   if (kind == nullptr) {
     return String();
   }
-  if (equalsIgnoreCase(kind, "picture") || equalsIgnoreCase(kind, "pictures")) {
+  if (core::equalsIgnoreCase(kind, "picture") || core::equalsIgnoreCase(kind, "pictures")) {
     return config_.picture_dir;
   }
-  if (equalsIgnoreCase(kind, "music") || equalsIgnoreCase(kind, "audio")) {
+  if (core::equalsIgnoreCase(kind, "music") || core::equalsIgnoreCase(kind, "audio")) {
     return config_.music_dir;
   }
-  if (equalsIgnoreCase(kind, "recorder") || equalsIgnoreCase(kind, "record") || equalsIgnoreCase(kind, "records")) {
+  if (core::equalsIgnoreCase(kind, "recorder") || core::equalsIgnoreCase(kind, "record") || core::equalsIgnoreCase(kind, "records")) {
     return config_.record_dir;
   }
   return String();
