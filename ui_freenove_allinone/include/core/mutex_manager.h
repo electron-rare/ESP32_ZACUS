@@ -76,9 +76,9 @@ class MutexManager {
   std::atomic<uint32_t> max_audio_wait_us_{0U};
   std::atomic<uint32_t> max_scenario_wait_us_{0U};
 
-  // Owner tracking for deadlock detection (volatile: written under semaphore).
-  volatile TaskHandle_t audio_owner_{nullptr};
-  volatile TaskHandle_t scenario_owner_{nullptr};
+  // Owner tracking for deadlock detection (atomic: safe cross-task reads).
+  std::atomic<TaskHandle_t> audio_owner_{nullptr};
+  std::atomic<TaskHandle_t> scenario_owner_{nullptr};
 };
 
 // ============================================================================

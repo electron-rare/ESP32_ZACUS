@@ -40,8 +40,8 @@ bool MutexManager::doInit() {
   scenario_timeout_count_.store(0U);
   max_audio_wait_us_.store(0U);
   max_scenario_wait_us_.store(0U);
-  audio_owner_ = nullptr;
-  scenario_owner_ = nullptr;
+  audio_owner_.store(nullptr, std::memory_order_relaxed);
+  scenario_owner_.store(nullptr, std::memory_order_relaxed);
 
   Serial.println("[MUTEX] Initialized: dual-mutex (audio + scenario), atomic stats");
   return true;
@@ -56,8 +56,8 @@ void MutexManager::doDeinit() {
     vSemaphoreDelete(scenario_mutex_);
     scenario_mutex_ = nullptr;
   }
-  audio_owner_ = nullptr;
-  scenario_owner_ = nullptr;
+  audio_owner_.store(nullptr, std::memory_order_relaxed);
+  scenario_owner_.store(nullptr, std::memory_order_relaxed);
   Serial.println("[MUTEX] Deinitialized");
 }
 
@@ -86,7 +86,7 @@ bool MutexManager::takeAudio(uint32_t timeout_ms) {
 
   // Deadlock prevention: audio must be acquired before scenario.
   TaskHandle_t current = xTaskGetCurrentTaskHandle();
-  if (scenario_owner_ == current) {
+  if (scenario_owner_.load(std::memory_order_acquire) == current) {
     Serial.println("[MUTEX] ERROR: Deadlock prevented — scenario held, cannot take audio");
     Serial.printf("[MUTEX]   Correct order: audio → scenario. Got: scenario → audio\n");
     return false;
@@ -99,7 +99,7 @@ bool MutexManager::takeAudio(uint32_t timeout_ms) {
 
   if (result == pdTRUE) {
     ++audio_lock_count_;
-    audio_owner_ = current;
+    audio_owner_.store(current, std::memory_order_release);
     updateMaxWait(max_audio_wait_us_, elapsed_us);
     if (elapsed_us > 5000U) {
       Serial.printf("[MUTEX] Audio lock acquired after %lu µs (contention)\n",
@@ -120,10 +120,10 @@ void MutexManager::releaseAudio() {
     Serial.println("[MUTEX] ERROR: Audio mutex not initialized");
     return;
   }
-  if (audio_owner_ != xTaskGetCurrentTaskHandle()) {
+  if (audio_owner_.load(std::memory_order_acquire) != xTaskGetCurrentTaskHandle()) {
     Serial.println("[MUTEX] WARNING: Audio released from non-owner task");
   }
-  audio_owner_ = nullptr;
+  audio_owner_.store(nullptr, std::memory_order_release);
   xSemaphoreGive(audio_mutex_);
 }
 
@@ -144,7 +144,7 @@ bool MutexManager::takeScenario(uint32_t timeout_ms) {
 
   if (result == pdTRUE) {
     ++scenario_lock_count_;
-    scenario_owner_ = xTaskGetCurrentTaskHandle();
+    scenario_owner_.store(xTaskGetCurrentTaskHandle(), std::memory_order_release);
     updateMaxWait(max_scenario_wait_us_, elapsed_us);
     if (elapsed_us > 5000U) {
       Serial.printf("[MUTEX] Scenario lock acquired after %lu µs (contention)\n",
@@ -165,10 +165,10 @@ void MutexManager::releaseScenario() {
     Serial.println("[MUTEX] ERROR: Scenario mutex not initialized");
     return;
   }
-  if (scenario_owner_ != xTaskGetCurrentTaskHandle()) {
+  if (scenario_owner_.load(std::memory_order_acquire) != xTaskGetCurrentTaskHandle()) {
     Serial.println("[MUTEX] WARNING: Scenario released from non-owner task");
   }
-  scenario_owner_ = nullptr;
+  scenario_owner_.store(nullptr, std::memory_order_release);
   xSemaphoreGive(scenario_mutex_);
 }
 
