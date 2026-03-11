@@ -60,6 +60,64 @@ String urlEncodeSimple(const char* text) {
   return out;
 }
 
+// Decode percent-encoded bytes in-place (e.g. %2e → '.').
+String urlDecodeSimple(const String& src) {
+  String out;
+  out.reserve(src.length());
+  for (unsigned int i = 0; i < src.length(); ++i) {
+    if (src[i] == '%' && i + 2 < src.length()) {
+      const char hi = src[i + 1];
+      const char lo = src[i + 2];
+      auto hexVal = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+      };
+      const int h = hexVal(hi);
+      const int l = hexVal(lo);
+      if (h >= 0 && l >= 0) {
+        out += static_cast<char>((h << 4) | l);
+        i += 2;
+        continue;
+      }
+    }
+    out += src[i];
+  }
+  return out;
+}
+
+// Sanitize a user-supplied path: decode percent-encoding, collapse separators,
+// remove all ".." segments, and reject paths that escape the intended root.
+// Returns an empty String on failure.
+String sanitizePath(const String& raw) {
+  // 1. Decode any percent-encoding first so %2e%2e is caught.
+  String path = urlDecodeSimple(raw);
+  path.trim();
+  if (path.isEmpty()) {
+    return String();
+  }
+  // 2. Normalise separators.
+  path.replace("\\", "/");
+  // 3. Reject and strip any ".." segment (handles ../, /../, bare ".." etc.).
+  //    Loop until no more ".." remain to defeat chained encodings.
+  while (path.indexOf("..") >= 0) {
+    path.replace("..", "");
+  }
+  // 4. Collapse repeated slashes.
+  while (path.indexOf("//") >= 0) {
+    path.replace("//", "/");
+  }
+  // 5. Strip leading slash (callers prepend the root).
+  if (path.startsWith("/")) {
+    path.remove(0, 1);
+  }
+  if (path.isEmpty()) {
+    return String();
+  }
+  return path;
+}
+
 bool ensureDir(const char* path) {
   if (path == nullptr || path[0] == '\0') {
     return false;
@@ -152,16 +210,10 @@ bool FileShareService::saveIncomingFile(const char* relative_path,
   if (!ensureSharedDirs()) {
     return false;
   }
-  String path = relative_path;
-  path.trim();
+  String path = sanitizePath(relative_path);
   if (path.isEmpty()) {
     return false;
   }
-  if (path.startsWith("/")) {
-    path = path.substring(1);
-  }
-  path.replace("..", "_");
-  path.replace("\\", "/");
   String full_path = String(kIncomingRoot) + "/" + path;
   const int slash = full_path.lastIndexOf('/');
   if (slash > 0) {
@@ -370,19 +422,9 @@ bool FileShareService::resolveIncomingPath(const char* requested_path, String* o
   if (requested_path == nullptr || requested_path[0] == '\0' || out_full_path == nullptr) {
     return false;
   }
-  String path = requested_path;
-  path.trim();
+  String path = sanitizePath(requested_path);
   if (path.isEmpty()) {
     return false;
-  }
-  path.replace("\\", "/");
-  path.replace("..", "_");
-  if (path.startsWith("/apps/shared/incoming/")) {
-    *out_full_path = path;
-    return true;
-  }
-  if (path.startsWith("/")) {
-    path.remove(0, 1);
   }
   *out_full_path = String(kIncomingRoot) + "/" + path;
   return true;

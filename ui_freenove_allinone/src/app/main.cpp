@@ -6338,8 +6338,33 @@ void setupWebUiImpl() {
       if (g_file_share_service.downloadFile(path.c_str(), &file, &full_path) && file) {
         file.close();
       }
+      // Sanitize: decode percent-encoding, strip "..", collapse slashes.
+      {
+        String clean = path;
+        clean.replace("\\", "/");
+        // Decode %XX sequences to catch encoded traversal (%2e%2e).
+        String decoded;
+        decoded.reserve(clean.length());
+        for (unsigned int ci = 0; ci < clean.length(); ++ci) {
+          if (clean[ci] == '%' && ci + 2 < clean.length()) {
+            auto hv = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+              if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+              return -1;
+            };
+            int h = hv(clean[ci+1]), l = hv(clean[ci+2]);
+            if (h >= 0 && l >= 0) { decoded += (char)((h<<4)|l); ci += 2; continue; }
+          }
+          decoded += clean[ci];
+        }
+        while (decoded.indexOf("..") >= 0) decoded.replace("..", "");
+        while (decoded.indexOf("//") >= 0) decoded.replace("//", "/");
+        if (decoded.startsWith("/")) decoded.remove(0, 1);
+        path = decoded;
+      }
       saved_path = String("/apps/shared/incoming/") + path;
-      if (saved_path.indexOf("..") >= 0) {
+      if (path.isEmpty()) {
         ok = false;
       } else {
         const char* mode = (offset == 0U) ? "w" : "a";
