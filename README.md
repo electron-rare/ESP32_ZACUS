@@ -47,6 +47,7 @@ python -m platformio device monitor -b 115200 --port <PORT>
 
 ```bash
 ./scripts/doctor_repo.sh
+./scripts/check_memory_budget.sh --env freenove_esp32s3_full_with_ui --max-ram 75 --max-flash 80 --yes
 python tests/sprint1_utility_contract.py --mode serial --port <PORT>
 python tests/sprint2_capture_contract.py --mode serial --port <PORT>
 python tests/sprint3_audio_contract.py --mode serial --port <PORT>
@@ -87,8 +88,8 @@ python tests/phase9_ui_validation.py --port <PORT>
 - Source files: `258`
 
 ### Corrections Prioritaires
-- [ ] Vérifier target PlatformIO et budget mémoire
-- [ ] Ajouter/fiabiliser les commandes de vérification automatiques.
+- [x] Vérifier target PlatformIO et budget mémoire
+- [x] Ajouter/fiabiliser les commandes de vérification automatiques.
 - [ ] Clore les points bloquants avant optimisation avancée.
 
 ### Optimisation

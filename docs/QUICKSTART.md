@@ -23,6 +23,15 @@ python -m platformio run -e freenove_esp32s3_full_with_ui
 python -m platformio run -e freenove_esp32s3_full_with_ui -t buildfs
 ```
 
+## Budget memoire
+
+```bash
+./scripts/check_memory_budget.sh --env freenove_esp32s3_full_with_ui --max-ram 75 --max-flash 80 --yes
+```
+
+Le script force un build `platformio run`, lit les lignes `RAM:` et `Flash:`,
+et retourne un code non-zero si les seuils sont depasses.
+
 ## Flash
 
 ```bash
