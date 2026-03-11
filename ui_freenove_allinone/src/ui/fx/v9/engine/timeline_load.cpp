@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 #include <iomanip>
@@ -118,11 +119,19 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
     }
   }
 
+  constexpr size_t kMaxClips = 64;
+  constexpr size_t kMaxMods = 128;
+  constexpr size_t kMaxEvents = 128;
+
   const JsonArrayConst clips = root["clips"].as<JsonArrayConst>();
   if (!clips.isNull()) {
-    out.clips.reserve(clips.size());
+    const size_t clip_count = std::min(clips.size(), kMaxClips);
+    out.clips.reserve(clip_count);
+    size_t clip_idx = 0;
     for (JsonVariantConst node : clips) {
+      if (clip_idx >= clip_count) break;
       if (!node.is<JsonObjectConst>()) {
+        ++clip_idx;
         continue;
       }
       const JsonObjectConst clip_obj = node.as<JsonObjectConst>();
@@ -134,20 +143,28 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
       clip.fx = std::string(clip_obj["fx"] | "");
       clip.seed = clip_obj["seed"] | 0U;
 
+      if (clip.fx.length() > 64) clip.fx.resize(64);
+      if (clip.track.length() > 32) clip.track.resize(32);
+
       const JsonObjectConst params = clip_obj["params"].as<JsonObjectConst>();
       if (!params.isNull()) {
         fillStringMap(clip.params, params);
       }
 
       out.clips.push_back(clip);
+      ++clip_idx;
     }
   }
 
   const JsonArrayConst mods = root["mods"].as<JsonArrayConst>();
   if (!mods.isNull()) {
-    out.mods.reserve(mods.size());
+    const size_t mod_count = std::min(mods.size(), kMaxMods);
+    out.mods.reserve(mod_count);
+    size_t mod_idx = 0;
     for (JsonVariantConst node : mods) {
+      if (mod_idx >= mod_count) break;
       if (!node.is<JsonObjectConst>()) {
+        ++mod_idx;
         continue;
       }
       const JsonObjectConst mod_obj = node.as<JsonObjectConst>();
@@ -156,6 +173,8 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
       mod.param = std::string(mod_obj["param"] | "");
       mod.type = std::string(mod_obj["type"] | "");
 
+      if (mod.type.length() > 64) mod.type.resize(64);
+
       const JsonObjectConst args = mod_obj["args"].as<JsonObjectConst>();
       if (!args.isNull()) {
         fillStringMap(mod.args, args);
@@ -163,14 +182,19 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
       fillDirectArgs(mod.args, mod_obj, isReservedModKey);
 
       out.mods.push_back(mod);
+      ++mod_idx;
     }
   }
 
   const JsonArrayConst events = root["events"].as<JsonArrayConst>();
   if (!events.isNull()) {
-    out.events.reserve(events.size());
+    const size_t event_count = std::min(events.size(), kMaxEvents);
+    out.events.reserve(event_count);
+    size_t event_idx = 0;
     for (JsonVariantConst node : events) {
+      if (event_idx >= event_count) break;
       if (!node.is<JsonObjectConst>()) {
+        ++event_idx;
         continue;
       }
       const JsonObjectConst event_obj = node.as<JsonObjectConst>();
@@ -180,6 +204,8 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
       event.bar = event_obj["bar"] | -1;
       event.type = std::string(event_obj["type"] | "");
 
+      if (event.type.length() > 64) event.type.resize(64);
+
       const JsonObjectConst args = event_obj["args"].as<JsonObjectConst>();
       if (!args.isNull()) {
         fillStringMap(event.args, args);
@@ -187,6 +213,7 @@ bool loadTimelineFromJson(Timeline& out, IJsonParser& parser, const std::string&
       fillDirectArgs(event.args, event_obj, isReservedEventKey);
 
       out.events.push_back(event);
+      ++event_idx;
     }
   }
 

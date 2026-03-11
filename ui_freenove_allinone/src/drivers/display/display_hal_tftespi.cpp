@@ -62,7 +62,7 @@ class TftEsPiDisplayHal final : public DisplayHal {
       if ((micros() - started_us) >= timeout_us) {
         return !dmaBusy();
       }
-      delayMicroseconds(20U);
+      vTaskDelay(1);  // Yield to RTOS scheduler (minimum 1 tick)
     }
     return true;
   }
