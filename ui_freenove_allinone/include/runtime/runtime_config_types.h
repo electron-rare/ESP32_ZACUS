@@ -13,7 +13,7 @@ struct RuntimeNetworkConfig {
   char local_ssid[33] = {0};
   char local_password[65] = {0};
   char ap_default_ssid[33] = "Freenove-Setup";
-  char ap_default_password[65] = {0};
+  char ap_default_password[65] = "zacus-setup-42";
   bool force_ap_if_not_local = false;
   bool pause_local_retry_when_ap_client = false;
   uint32_t local_retry_ms = kDefaultLocalRetryMs;
