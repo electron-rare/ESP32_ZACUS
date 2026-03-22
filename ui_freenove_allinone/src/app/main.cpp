@@ -68,6 +68,10 @@
 #include "ui/camera_capture/win311_camera_ui.h"
 #include "ui_manager.h"
 #include "ui/ui_amiga_shell.h"
+#include "security/auth_middleware.h"
+#include "security/input_validator.h"
+#include "voice/voice_ws_client.h"
+#include "analytics/game_analytics.h"
 
 #ifndef ZACUS_FW_VERSION
 #define ZACUS_FW_VERSION "dev"
@@ -5193,6 +5197,21 @@ void webSendStatusSse() {
   g_web_server.sendContent("event: done\ndata: 1\n\n");
 }
 
+// Auth guard — returns 401 if token invalid, 429 if rate-limited
+#if ZACUS_AUTH_ENABLED
+#define WEB_AUTH_CHECK() \
+    if (!zacus::security::validateAuthHeader(g_web_server.header("Authorization"))) { \
+        g_web_server.send(401, "application/json", "{\"error\":\"unauthorized\"}"); \
+        return; \
+    } \
+    if (!zacus::security::rateLimitCheck(g_web_server.client().remoteIP().toString())) { \
+        g_web_server.send(429, "application/json", "{\"error\":\"too_many_requests\"}"); \
+        return; \
+    }
+#else
+#define WEB_AUTH_CHECK() ((void)0)
+#endif
+
 void setupWebUiImpl() {
   const char* auth_headers[] = {kWebAuthHeaderName};
   g_web_server.collectHeaders(auth_headers, 1);
@@ -5263,6 +5282,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/hardware/led", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     int red = g_web_server.arg("r").toInt();
     int green = g_web_server.arg("g").toInt();
     int blue = g_web_server.arg("b").toInt();
@@ -5303,6 +5323,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/hardware/led/auto", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     bool enabled = false;
     bool parsed = false;
     if (g_web_server.hasArg("enabled")) {
@@ -5340,6 +5361,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/camera/on", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     if (g_camera_scene_active) {
       g_web_server.send(409, "application/json", "{\"ok\":false,\"error\":\"camera_busy_recorder_owner\"}");
       return;
@@ -5354,6 +5376,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/camera/off", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     if (g_camera_scene_active) {
       g_web_server.send(409, "application/json", "{\"ok\":false,\"error\":\"camera_busy_recorder_owner\"}");
       return;
@@ -5392,6 +5415,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/media/play", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String path = g_web_server.arg("path");
     StaticJsonDocument<256> request_json;
     if (webParseJsonBody(&request_json) && path.isEmpty()) {
@@ -5402,11 +5426,13 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/media/stop", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = g_media.stop(&g_audio);
     webSendResult("MEDIA_STOP", ok);
   });
 
   webOnApi("/api/media/record/start", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     uint16_t seconds = static_cast<uint16_t>(g_web_server.arg("seconds").toInt());
     String filename = g_web_server.arg("filename");
     StaticJsonDocument<256> request_json;
@@ -5423,6 +5449,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/media/record/stop", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = g_media.stopRecording();
     webSendResult("REC_STOP", ok);
   });
@@ -5483,6 +5510,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/share/upload", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String path = g_web_server.arg("path");
     if (path.isEmpty()) {
       path = g_web_server.arg("filename");
@@ -5560,6 +5588,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/share/pull", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String peer_host = g_web_server.arg("peer_host");
     uint16_t peer_port = static_cast<uint16_t>(g_web_server.arg("peer_port").toInt());
     String remote_path = g_web_server.arg("remote_path");
@@ -5608,6 +5637,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/apps/open", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String app_id = g_web_server.arg("id");
     String mode = g_web_server.arg("mode");
     String source = g_web_server.arg("source");
@@ -5642,6 +5672,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/apps/close", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String app_id = g_web_server.arg("id");
     String reason = g_web_server.arg("reason");
     StaticJsonDocument<256> request_json;
@@ -5664,6 +5695,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/apps/action", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String app_id = g_web_server.arg("id");
     String action_name = g_web_server.arg("action");
     String payload = g_web_server.arg("payload");
@@ -5718,21 +5750,25 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/wifi/disconnect", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     webScheduleStaDisconnect();
     webSendResult("WIFI_DISCONNECT", true);
   });
 
   webOnApi("/api/network/wifi/disconnect", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     webScheduleStaDisconnect();
     webSendResult("WIFI_DISCONNECT", true);
   });
 
   webOnApi("/api/network/wifi/reconnect", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = webReconnectLocalWifi();
     webSendResult("WIFI_RECONNECT", ok);
   });
 
   webOnApi("/api/wifi/connect", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String ssid = g_web_server.arg("ssid");
     String password = g_web_server.arg("password");
     bool persist = false;
@@ -5794,6 +5830,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/network/wifi/connect", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String ssid = g_web_server.arg("ssid");
     String password = g_web_server.arg("password");
     bool persist = false;
@@ -5855,6 +5892,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/espnow/send", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String payload = g_web_server.arg("payload");
     StaticJsonDocument<768> request_json;
     if (webParseJsonBody(&request_json)) {
@@ -5875,6 +5913,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/network/espnow/send", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String payload = g_web_server.arg("payload");
     StaticJsonDocument<768> request_json;
     if (webParseJsonBody(&request_json)) {
@@ -5895,16 +5934,19 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/network/espnow/on", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = g_network.enableEspNow();
     webSendResult("ESPNOW_ON", ok);
   });
 
   webOnApi("/api/network/espnow/off", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     g_network.disableEspNow();
     webSendResult("ESPNOW_OFF", true);
   });
 
   webOnApi("/api/network/espnow/peer", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String mac = g_web_server.arg("mac");
     StaticJsonDocument<256> request_json;
     if (webParseJsonBody(&request_json) && mac.isEmpty()) {
@@ -5915,6 +5957,7 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/network/espnow/peer", HTTP_DELETE, []() {
+    WEB_AUTH_CHECK();
     String mac = g_web_server.arg("mac");
     StaticJsonDocument<256> request_json;
     if (webParseJsonBody(&request_json) && mac.isEmpty()) {
@@ -5925,16 +5968,19 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/story/refresh-sd", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = refreshStoryFromSd();
     webSendResult("STORY_REFRESH_SD", ok);
   });
 
   webOnApi("/api/scenario/unlock", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     const bool ok = dispatchScenarioEventByName("UNLOCK", millis());
     webSendResult("UNLOCK", ok);
   });
 
   webOnApi("/api/scenario/next", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     bool ok = dispatchScenarioEventByName("SERIAL:BTN_NEXT", millis());
     if (!ok) {
       ok = notifyScenarioButtonGuarded(5U, false, millis(), "api_scenario_next");
@@ -5943,10 +5989,15 @@ void setupWebUiImpl() {
   });
 
   webOnApi("/api/control", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
     String action = g_web_server.arg("action");
     StaticJsonDocument<768> request_json;
     if (webParseJsonBody(&request_json) && action.isEmpty()) {
       action = request_json["action"] | "";
+    }
+    if (!zacus::security::validateInput(action, 64)) {
+      g_web_server.send(400, "application/json", "{\"error\":\"invalid_input\"}");
+      return;
     }
     String error;
     const bool ok = dispatchControlAction(action, millis(), &error);
@@ -5957,6 +6008,109 @@ void setupWebUiImpl() {
       response["error"] = error;
     }
     webSendJsonDocument(response, ok ? 200 : 400);
+  });
+
+  // Voice pipeline API endpoints
+  webOnApi("/api/voice/query", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    String text = g_web_server.arg("text");
+    StaticJsonDocument<512> body;
+    if (text.isEmpty() && webParseJsonBody(&body)) {
+      text = body["text"] | "";
+    }
+    if (text.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"error\":\"missing text\"}");
+      return;
+    }
+    if (!zacus::security::validateInput(text, 256)) {
+      g_web_server.send(400, "application/json", "{\"error\":\"invalid_input\"}");
+      return;
+    }
+    const bool ok = zacus::voice::voiceWsTextQuery(text.c_str());
+    g_web_server.send(ok ? 200 : 503, "application/json",
+        ok ? "{\"status\":\"sent\"}" : "{\"error\":\"not_connected\"}");
+  });
+
+  webOnApi("/api/voice/status", HTTP_GET, []() {
+    const auto state = zacus::voice::voiceWsGetState();
+    const char* last_resp = zacus::voice::voiceWsGetLastResponse();
+    StaticJsonDocument<512> doc;
+    doc["connected"] = (state == zacus::voice::WsClientState::HANDSHAKE_DONE ||
+                        state == zacus::voice::WsClientState::CONNECTED);
+    doc["state"] = static_cast<int>(state);
+    doc["has_audio"] = zacus::voice::voiceWsHasAudio();
+    if (last_resp && last_resp[0] != '\0') {
+      doc["last_response"] = last_resp;
+    }
+    webSendJsonDocument(doc, 200);
+  });
+
+  // Analytics API endpoints
+  webOnApi("/api/analytics", HTTP_GET, []() {
+    StaticJsonDocument<1024> doc;
+    zacus::analytics::analyticsToJson(doc);
+    webSendJsonDocument(doc, 200);
+  });
+
+  webOnApi("/api/analytics/puzzle/start", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    String puzzle_id = g_web_server.arg("puzzle_id");
+    StaticJsonDocument<256> body;
+    if (puzzle_id.isEmpty() && webParseJsonBody(&body)) {
+      puzzle_id = body["puzzle_id"] | "";
+    }
+    if (puzzle_id.isEmpty()) {
+      g_web_server.send(400, "application/json", "{\"error\":\"missing puzzle_id\"}");
+      return;
+    }
+    zacus::analytics::analyticsPuzzleStart(puzzle_id.c_str());
+    g_web_server.send(200, "application/json", "{\"status\":\"ok\"}");
+  });
+
+  webOnApi("/api/analytics/puzzle/attempt", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    String puzzle_id = g_web_server.arg("puzzle_id");
+    StaticJsonDocument<256> body;
+    if (puzzle_id.isEmpty() && webParseJsonBody(&body)) {
+      puzzle_id = body["puzzle_id"] | "";
+    }
+    if (!puzzle_id.isEmpty()) {
+      zacus::analytics::analyticsPuzzleAttempt(puzzle_id.c_str());
+    }
+    g_web_server.send(200, "application/json", "{\"status\":\"ok\"}");
+  });
+
+  webOnApi("/api/analytics/puzzle/hint", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    String puzzle_id = g_web_server.arg("puzzle_id");
+    StaticJsonDocument<256> body;
+    if (puzzle_id.isEmpty() && webParseJsonBody(&body)) {
+      puzzle_id = body["puzzle_id"] | "";
+    }
+    if (!puzzle_id.isEmpty()) {
+      zacus::analytics::analyticsHintRequested(puzzle_id.c_str());
+    }
+    g_web_server.send(200, "application/json", "{\"status\":\"ok\"}");
+  });
+
+  webOnApi("/api/analytics/puzzle/solved", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    String puzzle_id = g_web_server.arg("puzzle_id");
+    StaticJsonDocument<256> body;
+    if (puzzle_id.isEmpty() && webParseJsonBody(&body)) {
+      puzzle_id = body["puzzle_id"] | "";
+    }
+    if (!puzzle_id.isEmpty()) {
+      zacus::analytics::analyticsPuzzleSolved(puzzle_id.c_str());
+    }
+    g_web_server.send(200, "application/json", "{\"status\":\"ok\"}");
+  });
+
+  webOnApi("/api/analytics/reset", HTTP_POST, []() {
+    WEB_AUTH_CHECK();
+    zacus::analytics::analyticsReset();
+    zacus::analytics::analyticsStartSession();
+    g_web_server.send(200, "application/json", "{\"status\":\"ok\"}");
   });
 
   g_web_server.onNotFound([]() {
@@ -7396,6 +7550,9 @@ void setup() {
   g_runtime_scene_service.configure(refreshSceneIfNeededImpl, startPendingAudioIfAny);
   g_runtime_web_service.configure(setupWebUiImpl);
 
+  zacus::security::authInit();
+  Serial.printf("[AUTH] Token: %s\n", zacus::security::getAuthToken().c_str());
+
   if (!g_storage.begin()) {
     Serial.println("[MAIN] storage init failed");
   }
@@ -7625,6 +7782,29 @@ void setup() {
     }
   }
   g_next_espnow_discovery_ms = millis() + 2000U;
+
+  // Voice pipeline — connect to voice bridge server
+  {
+    zacus::voice::VoiceWsConfig voice_cfg;
+    voice_cfg.server_url = "ws://192.168.0.120:8200/voice/ws";
+    voice_cfg.device_id = g_network_cfg.hostname[0] != '\0'
+                              ? String(g_network_cfg.hostname)
+                              : String("zacus-freenove");
+    voice_cfg.reconnect_delay_ms = 10000;
+    voice_cfg.query_timeout_ms = 15000;
+    if (zacus::voice::voiceWsInit(voice_cfg)) {
+      zacus::voice::voiceWsConnect();
+      Serial.println("[VOICE] pipeline initialized, connecting to bridge");
+    } else {
+      Serial.println("[VOICE] pipeline init failed");
+    }
+  }
+
+  // Analytics
+  zacus::analytics::analyticsInit();
+  zacus::analytics::analyticsStartSession();
+  Serial.println("[ANALYTICS] session started");
+
   // Boot directly to Amiga UI Shell (skip default scenario rendering)
   // refreshSceneIfNeeded(true);
   // startPendingAudioIfAny();
@@ -7915,6 +8095,26 @@ void runRuntimeIteration(uint32_t now_ms) {
 void loop() {
   const uint32_t now_ms = millis();
   pollSerialCommands(now_ms);
+
+  // Voice pipeline tick — process WebSocket messages and play TTS audio
+  zacus::voice::voiceWsTick();
+  if (zacus::voice::voiceWsHasAudio()) {
+    size_t audio_size = 0;
+    const uint8_t* audio_data = zacus::voice::voiceWsGetAudio(&audio_size);
+    if (audio_data && audio_size > 0) {
+      // Save TTS WAV to temp file and play via AudioManager
+      const char* tts_path = "/audio/tts_response.wav";
+      File f = LittleFS.open(tts_path, "w");
+      if (f) {
+        f.write(audio_data, audio_size);
+        f.close();
+        g_audio.play(tts_path);
+        Serial.printf("[VOICE] Playing TTS response: %u bytes\n",
+                      static_cast<unsigned int>(audio_size));
+      }
+      zacus::voice::voiceWsClearAudio();
+    }
+  }
 
   if (g_safe_diagnostic_mode) {
     runSafeDiagnosticIteration(now_ms);

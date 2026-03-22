@@ -97,6 +97,7 @@
 #define FREENOVE_TFT_MISO -1
 #define FREENOVE_TFT_CS -1
 #define FREENOVE_TFT_DC 45
+// NOTE: default 20 conflicts with BAT_ADC_PIN; override via platformio.ini build_flags.
 #define FREENOVE_TFT_RST 20
 #define FREENOVE_TFT_BL 2
 

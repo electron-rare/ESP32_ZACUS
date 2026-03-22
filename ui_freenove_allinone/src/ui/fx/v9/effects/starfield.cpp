@@ -11,10 +11,12 @@ void StarfieldFx::init(const FxContext& ctx)
   rng.seed(ctx.seed ^ 0xA53C9E1u);
   st.clear();
   st.reserve((size_t)stars);
+  const int initW = (ctx.internalW > 0) ? ctx.internalW : 160;
+  const int initH = (ctx.internalH > 0) ? ctx.internalH : 120;
   for (int i = 0; i < stars; i++) {
     Star s;
-    s.x = (int)rng.nextRange(0, 160);
-    s.y = (int)rng.nextRange(0, 120);
+    s.x = (int)rng.nextRange(0, (uint32_t)initW);
+    s.y = (int)rng.nextRange(0, (uint32_t)initH);
     s.z = (int)rng.nextRange(0, 3); // 0 near, 1 mid, 2 far
     st.push_back(s);
   }

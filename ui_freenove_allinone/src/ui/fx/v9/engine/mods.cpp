@@ -44,11 +44,9 @@ float applyMod(const Mod& m, float clipT, float /*dt*/, uint32_t beat, uint32_t 
     }
     case ModType::BEAT_PULSE: {
       // amount on beat, exponential decay within beat; user should add this to a base value.
-      float pulse = 0.0f;
-      if (beatHit) pulse = m.amount;
-      // Within beat, let it decay: pulse * decay^(phase*beats)
+      // Always apply decay based on beat phase so the pulse decays smoothly between beats.
       float d = powf(std::max(0.001f, m.decay), beatPhase * 1.0f);
-      return pulse * d;
+      return m.amount * d;
     }
     case ModType::RANDOM_HOLD: {
       // Deterministic: change every holdBeats on beat boundary

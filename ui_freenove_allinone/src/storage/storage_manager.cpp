@@ -379,9 +379,15 @@ bool StorageManager::readTextFromLittleFs(const char* path, String* out_payload)
     return false;
   }
   out_payload->remove(0);
-  out_payload->reserve(static_cast<size_t>(file.size()) + 1U);
+  const size_t file_size = static_cast<size_t>(file.size());
+  out_payload->reserve(file_size + 1U);
+  // Read in chunks to avoid O(n²) String concatenation
+  constexpr size_t kChunkSize = 256U;
+  char chunk[kChunkSize];
   while (file.available()) {
-    *out_payload += static_cast<char>(file.read());
+    const int bytes_read = file.readBytes(chunk, kChunkSize);
+    if (bytes_read <= 0) break;
+    out_payload->concat(chunk, static_cast<size_t>(bytes_read));
   }
   file.close();
   return !out_payload->isEmpty();
@@ -409,17 +415,26 @@ bool StorageManager::readTextFromSdCard(const char* path, String* out_payload) c
     return false;
   }
   out_payload->remove(0);
-  out_payload->reserve(static_cast<size_t>(file.size()) + 1U);
+  const size_t sd_file_size = static_cast<size_t>(file.size());
+  out_payload->reserve(sd_file_size + 1U);
+  // Read in chunks to avoid O(n²) String concatenation
+  constexpr size_t kSdChunkSize = 256U;
+  char sd_chunk[kSdChunkSize];
+  bool read_error = false;
   while (file.available()) {
-    const int value = file.read();
-    if (value < 0) {
-      file.close();
-      noteSdAccessFailure("read", sd_path.c_str(), EIO);
-      return false;
+    const int bytes_read = file.readBytes(sd_chunk, kSdChunkSize);
+    if (bytes_read < 0) {
+      read_error = true;
+      break;
     }
-    *out_payload += static_cast<char>(value);
+    if (bytes_read == 0) break;
+    out_payload->concat(sd_chunk, static_cast<size_t>(bytes_read));
   }
   file.close();
+  if (read_error) {
+    noteSdAccessFailure("read", sd_path.c_str(), EIO);
+    return false;
+  }
   noteSdAccessSuccess();
   return !out_payload->isEmpty();
 #else

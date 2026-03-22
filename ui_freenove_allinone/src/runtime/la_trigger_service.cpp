@@ -190,7 +190,7 @@ bool isSampleMatchingForTarget(const RuntimeHardwareConfig& config,
   if (relaxed_for_continuity && cents_limit < 120U) {
     cents_limit = static_cast<uint8_t>(std::min<uint16_t>(120U, static_cast<uint16_t>(cents_limit + 4U)));
   }
-  if (static_cast<uint8_t>(abs_cents) > cents_limit) {
+  if (abs_cents > static_cast<int16_t>(cents_limit)) {
     return false;
   }
   const uint16_t tolerance_hz =

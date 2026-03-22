@@ -338,7 +338,7 @@ bool ScenarioManager::gotoScene(const char* scene_id, uint32_t now_ms, const cha
     }
     const char* enter_source =
         (source != nullptr && source[0] != '\0') ? source : "scene_goto";
-    enterStep(static_cast<int8_t>(index), now_ms, enter_source, "scene_goto");
+    enterStep(static_cast<int16_t>(index), now_ms, enter_source, "scene_goto");
     runImmediateTransitions(now_ms, enter_source, "scene_goto");
     return true;
   }
@@ -484,7 +484,7 @@ bool ScenarioManager::applyTransition(const TransitionDef& transition,
                   (event_name != nullptr && event_name[0] != '\0') ? event_name : "-",
                   (source != nullptr && source[0] != '\0') ? source : "-");
   }
-  const int8_t target = storyFindStepIndex(*scenario_, transition.targetStepId);
+  const int16_t target = storyFindStepIndex(*scenario_, transition.targetStepId);
   if (target < 0) {
     Serial.printf("[SCENARIO] invalid transition target: %s\n", transition.targetStepId);
     return false;
@@ -561,8 +561,8 @@ void ScenarioManager::evaluateAfterMsTransitions(uint32_t now_ms) {
   }
 }
 
-void ScenarioManager::enterStep(int8_t step_index, uint32_t now_ms, const char* source, const char* event_name) {
-  if (scenario_ == nullptr || step_index < 0 || step_index >= static_cast<int8_t>(scenario_->stepCount)) {
+void ScenarioManager::enterStep(int16_t step_index, uint32_t now_ms, const char* source, const char* event_name) {
+  if (scenario_ == nullptr || step_index < 0 || step_index >= static_cast<int16_t>(scenario_->stepCount)) {
     return;
   }
 
@@ -613,7 +613,7 @@ void ScenarioManager::enterStep(int8_t step_index, uint32_t now_ms, const char* 
 }
 
 const StepDef* ScenarioManager::currentStep() const {
-  if (scenario_ == nullptr || current_step_index_ < 0 || current_step_index_ >= static_cast<int8_t>(scenario_->stepCount)) {
+  if (scenario_ == nullptr || current_step_index_ < 0 || current_step_index_ >= static_cast<int16_t>(scenario_->stepCount)) {
     return nullptr;
   }
   return &scenario_->steps[current_step_index_];

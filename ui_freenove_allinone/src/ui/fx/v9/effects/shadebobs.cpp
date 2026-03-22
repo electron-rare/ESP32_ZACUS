@@ -50,7 +50,7 @@ void ShadebobsFx::render(const FxContext& ctx, RenderTarget& rt)
       int x1 = x + dx;
       if (x0 < 0) x0 = 0;
       if (x1 >= rt.w) x1 = rt.w-1;
-      uint8_t v = (uint8_t)(120 + (radius - (yy<0?-yy:yy)) * 10);
+      uint8_t v = (uint8_t)std::min(255, 120 + (radius - (yy<0?-yy:yy)) * 10);
       for (int xx = x0; xx <= x1; xx++) row[xx] = add_sat_u8(row[xx], v);
     }
   }

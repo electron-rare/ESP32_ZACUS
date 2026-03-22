@@ -403,10 +403,10 @@ uint32_t lerpRgb(uint32_t from_rgb, uint32_t to_rgb, uint16_t progress_per_mille
   const uint32_t to_g = (to_rgb >> 8) & 0xFFU;
   const uint32_t to_b = to_rgb & 0xFFU;
 
-  const uint32_t out_r = from_r + ((to_r - from_r) * progress_per_mille) / 1000U;
-  const uint32_t out_g = from_g + ((to_g - from_g) * progress_per_mille) / 1000U;
-  const uint32_t out_b = from_b + ((to_b - from_b) * progress_per_mille) / 1000U;
-  return (out_r << 16) | (out_g << 8) | out_b;
+  const int32_t out_r = static_cast<int32_t>(from_r) + (static_cast<int32_t>(to_r) - static_cast<int32_t>(from_r)) * static_cast<int32_t>(progress_per_mille) / 1000;
+  const int32_t out_g = static_cast<int32_t>(from_g) + (static_cast<int32_t>(to_g) - static_cast<int32_t>(from_g)) * static_cast<int32_t>(progress_per_mille) / 1000;
+  const int32_t out_b = static_cast<int32_t>(from_b) + (static_cast<int32_t>(to_b) - static_cast<int32_t>(from_b)) * static_cast<int32_t>(progress_per_mille) / 1000;
+  return (static_cast<uint32_t>(out_r) << 16) | (static_cast<uint32_t>(out_g) << 8) | static_cast<uint32_t>(out_b);
 }
 
 const char* mapSymbolToken(const char* symbol) {

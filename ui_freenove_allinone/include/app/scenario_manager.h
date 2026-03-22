@@ -71,13 +71,13 @@ class ScenarioManager {
   bool applyTransition(const TransitionDef& transition, uint32_t now_ms, const char* source, const char* event_name);
   bool runImmediateTransitions(uint32_t now_ms, const char* source, const char* parent_event_name);
   void evaluateAfterMsTransitions(uint32_t now_ms);
-  void enterStep(int8_t step_index, uint32_t now_ms, const char* source, const char* event_name = nullptr);
+  void enterStep(int16_t step_index, uint32_t now_ms, const char* source, const char* event_name = nullptr);
   const StepDef* currentStep() const;
   bool transitionMatches(const TransitionDef& transition, StoryEventType type, const char* event_name) const;
   bool isTransitionAllowed(const TransitionDef& transition, const char* context, const char* event_name) const;
 
   const ScenarioDef* scenario_ = nullptr;
-  int8_t current_step_index_ = -1;
+  int16_t current_step_index_ = -1;
   uint32_t step_entered_at_ms_ = 0U;
   bool scene_changed_ = false;
   bool test_mode_ = false;

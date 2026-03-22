@@ -116,7 +116,21 @@ void Tunnel3DFx::render(const FxContext& /*ctx*/, RenderTarget& rt)
     return;
   }
 
-  // Fast path
+  // Fast path: only valid when stride == width (no padding)
+  if (rt.strideBytes != rt.w) {
+    // Fall back to per-row rendering when stride differs
+    for (int y = 0; y < h_; y++) {
+      uint8_t* out = rt.rowPtr<uint8_t>(y);
+      const uint8_t* um = &uMap_[(size_t)y * (size_t)w_];
+      const uint8_t* vm = &vMap_[(size_t)y * (size_t)w_];
+      for (int x = 0; x < w_; x++) {
+        uint8_t u = (uint8_t)(um[x] + uPhase_);
+        uint8_t v = (uint8_t)(vm[x] + vPhase_);
+        out[x] = (uint8_t)(tex_[(v << 8) | u] + palShift_);
+      }
+    }
+    return;
+  }
   uint8_t* out = (uint8_t*)rt.pixels;
   const size_t n = (size_t)w_ * (size_t)h_;
 
