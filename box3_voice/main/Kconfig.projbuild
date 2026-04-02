@@ -1,0 +1,56 @@
+menu "Zacus BOX-3 Voice Configuration"
+
+    config ZACUS_WIFI_SSID
+        string "WiFi SSID"
+        default "zacus-net"
+        help
+            WiFi network name for connecting to the voice bridge.
+
+    config ZACUS_WIFI_PASSWORD
+        string "WiFi Password"
+        default ""
+        help
+            WiFi password. Leave empty for open networks.
+
+    config ZACUS_VOICE_BRIDGE_URL
+        string "Voice Bridge WebSocket URL"
+        default "ws://192.168.0.119:8200/voice/ws"
+        help
+            WebSocket endpoint for the mascarade voice bridge.
+            The bridge routes voice commands to the hints engine.
+
+    config ZACUS_VOICE_TOKEN
+        string "Voice Bridge Auth Token"
+        default ""
+        help
+            Authentication token for the voice bridge.
+            If set, appended as ?token=<value> query parameter.
+
+    config ZACUS_WAKE_WORD
+        string "Wake Word"
+        default "hi esp"
+        help
+            Wake word for ESP-SR WakeNet activation.
+            Supported: "hi esp", "alexa", "hey siri" (WakeNet9).
+
+    config ZACUS_SPEAKER_VOLUME
+        int "Default Speaker Volume (0-100)"
+        default 70
+        range 0 100
+        help
+            Default speaker volume at boot.
+
+    config ZACUS_MIC_GAIN
+        int "Microphone Gain (0-100)"
+        default 80
+        range 0 100
+        help
+            Microphone input gain for speech recognition.
+
+    config ZACUS_ENABLE_DISPLAY
+        bool "Enable LCD Display"
+        default y
+        help
+            Enable the ILI9341 display for status feedback.
+
+endmenu
