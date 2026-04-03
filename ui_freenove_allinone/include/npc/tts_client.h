@@ -58,6 +58,40 @@ tts_result_t tts_synthesize(const char* text, uint8_t* out_buf,
 /// Get TTS client statistics.
 tts_stats_t tts_get_stats(void);
 
+// ============================================================
+// V3 fallback chain: XTTS-v2 → Piper → SD card
+// ============================================================
+
+// XTTS-v2 endpoint on KXKM-AI (GPU, ~2s latency, voice clone)
+#define TTS_XTTS_HOST       "kxkm-ai"
+#define TTS_XTTS_PORT       5002
+#define TTS_XTTS_API_PATH   "/v1/audio/speech"
+
+// Piper TTS fallback (CPU, ~500ms, Tower:8001)
+#define TTS_PIPER_API_PATH  "/v1/audio/speech"
+
+// Backend priority
+typedef enum {
+    TTS_BACKEND_XTTS  = 0,   // KXKM-AI XTTS-v2 (GPU voice clone)
+    TTS_BACKEND_PIPER = 1,   // Tower Piper TTS (CPU, faster)
+    TTS_BACKEND_SD    = 2,   // SD card pre-generated WAV (offline)
+    TTS_BACKEND_COUNT
+} tts_backend_t;
+
+/// Select best available backend (performs health-checks).
+/// Health-check results are cached for TTS_HEALTH_INTERVAL_MS.
+tts_backend_t tts_select_backend(uint32_t now_ms);
+
+/// Synthesize text using best available backend.
+/// Fallback chain: XTTS → Piper → SD.
+/// sd_fallback_key: phrase key used to build SD path (e.g. "hints.P1_SON.level_1.0").
+/// Returns TTS_RESULT_OK on success, error code otherwise.
+tts_result_t tts_speak_v3(const char* text, const char* sd_fallback_key,
+                           uint8_t* out_buf, size_t buf_capacity, size_t* out_len);
+
+/// Return the backend used by the last tts_speak_v3() call.
+tts_backend_t tts_last_backend(void);
+
 #ifdef __cplusplus
 }
 #endif

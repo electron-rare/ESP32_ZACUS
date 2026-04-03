@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "../../../lib/espnow_common/espnow_slave.c"
+    INCLUDE_DIRS
+        "."
+        "../../../lib/espnow_common"
+    REQUIRES
+        freertos
+        driver
+        esp_wifi
+        esp_now
+        nvs_flash
+        esp_common
+)
