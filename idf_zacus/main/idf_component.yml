@@ -3,3 +3,9 @@
 
 dependencies:
   joltwallet/littlefs: "^1.14"
+  ## Slice 6: ESP-SR (AFE + WakeNet9) for the voice_pipeline component.
+  ## Pinned to the 2.x line — 2.0+ is the IDF 5.x-friendly API. The
+  ## active wake model is selected via sdkconfig (CONFIG_SR_WN_WN9_HIESP).
+  ## A custom "Professeur Zacus" model is out of scope for this slice
+  ## (P4 of the voice spec, requires Espressif training round-trip).
+  espressif/esp-sr: "~2.0"

@@ -47,3 +47,14 @@ CONFIG_LOG_COLORS=y
 
 # ─── Bootloader / OTA rollback ───────────────────────────────────────────────
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# ─── ESP-SR (slice 6 — voice_pipeline) ───────────────────────────────────────
+# Standard placeholder wake-word: "Hi ESP" (wn9_hiesp). Custom Zacus model
+# is out of scope here (Espressif training, P4 voice spec). Keep MultiNet
+# disabled — STT happens off-device on MacStudio (whisper). Disabling MN
+# saves >1 MB of flash + lots of PSRAM at runtime.
+CONFIG_SR_WN_WN9_HIESP=y
+CONFIG_SR_MN_CN_NONE=y
+CONFIG_SR_MN_EN_NONE=y
+CONFIG_MODEL_IN_FLASH=y
+CONFIG_AFE_INTERFACE_V1=y

@@ -1,8 +1,14 @@
 # Zacus master partition table — merges ota_server's OTA layout (factory +
 # ota_0 + ota_1 + otadata) with a dedicated LittleFS partition for assets
-# (wakenet model, NPC phrases, scenario IR cache, …).
+# (NPC phrases, scenario IR cache, …) and a SPIFFS region for esp-sr model
+# blobs (`model`, slice 6 — flashed automatically as srmodels.bin by the
+# esp-sr component CMake glue).
 #
 # Total target: 16 MB flash (Freenove ESP32-S3 N16R8).
+# Layout (rough): 0x000000-0x020000 system, 0x020000-0x4A0000 apps (3×1.5 MB),
+#                 0x4A0000-0x6A0000 storage (LittleFS 2 MB),
+#                 0x6A0000-0x7A0000 model (SPIFFS 1 MB, esp-sr models),
+#                 remainder unused.
 #
 # Name,     Type, SubType, Offset,   Size,    Flags
 nvs,        data, nvs,     0x9000,   0x6000,
@@ -12,3 +18,4 @@ factory,    app,  factory, 0x20000,  0x180000,
 ota_0,      app,  ota_0,   ,         0x180000,
 ota_1,      app,  ota_1,   ,         0x180000,
 storage,    data, littlefs,,         0x200000,
+model,      data, spiffs,  ,         0x100000,

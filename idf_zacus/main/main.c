@@ -70,6 +70,23 @@ int puzzle_get_espnow_peer_count(void) {
     return 0;
 }
 
+// Slice 6: wake-word callback. Runs on the voice_pipeline capture task,
+// keep it short. The pipeline already auto-transitioned to LISTENING
+// before invoking us; here we just log + ensure capture is running so
+// downstream STT (slice 7) has audio to consume.
+static void on_voice_wake(const char *wake_word, void *user_ctx) {
+    (void) user_ctx;
+    ESP_LOGI(TAG, "WAKE: \"%s\" detected, transitioning to LISTENING",
+             wake_word ? wake_word : "(null)");
+    // Capture is already running (esp-sr feeds it), but if a future
+    // slice toggles it off between wakes, this keeps us robust.
+    esp_err_t err = voice_pipeline_start_capture();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "voice_pipeline_start_capture from wake cb: %s",
+                 esp_err_to_name(err));
+    }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 static void log_heap_stats(const char *phase) {
@@ -309,11 +326,22 @@ void app_main(void) {
 
             voice_pipeline_config_t voice_cfg;
             voice_pipeline_default_config(&voice_cfg);
-            voice_cfg.auto_start_capture = false;
+            // Slice 6: bring up esp-sr AFE + WakeNet (placeholder
+            // wn9_hiesp). Auto-start capture so the wake detector is
+            // hot from boot — saying "Hi ESP" fires the callback below.
+            voice_cfg.enable_wake_word   = true;
+            voice_cfg.auto_start_capture = true;
+            voice_pipeline_set_wake_callback(on_voice_wake, NULL);
             esp_err_t voice_err = voice_pipeline_init(&voice_cfg);
             if (voice_err != ESP_OK) {
                 ESP_LOGW(TAG, "voice_pipeline_init failed: %s",
                          esp_err_to_name(voice_err));
+            } else if (voice_pipeline_wake_word_active()) {
+                ESP_LOGI(TAG, "voice: wake-word detector active "
+                              "(placeholder \"hi esp\")");
+            } else {
+                ESP_LOGW(TAG, "voice: wake-word inactive — running "
+                              "in slice-5 stub mode");
             }
         }
     }
