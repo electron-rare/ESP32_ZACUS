@@ -6,6 +6,7 @@ idf_component_register(
     REQUIRES
         joltwallet__littlefs
         ota_server
+        media_manager
         nvs_flash
         esp_timer
         esp_system

@@ -37,6 +37,7 @@
 #include "nvs.h"
 
 #include "ota_server.h"
+#include "media_manager.h"
 
 static const char *TAG = "zacus_main";
 
@@ -256,6 +257,23 @@ void app_main(void) {
 
     if (mount_littlefs() == ESP_OK) {
         list_littlefs_root();
+
+        // Slice 3: bring up the ported media_manager. Catalog dirs live on
+        // LittleFS so this must run *after* the mount succeeds.
+        media_manager_config_t media_cfg;
+        media_manager_default_config(&media_cfg);
+        esp_err_t media_err = media_manager_init(&media_cfg);
+        if (media_err != ESP_OK) {
+            ESP_LOGE(TAG, "media_manager_init failed: %s",
+                     esp_err_to_name(media_err));
+        } else {
+            // Smoke test: try to play /littlefs/intro.mp3. The file is
+            // unlikely to exist this early — that's fine, the manager
+            // returns ESP_ERR_NOT_FOUND and logs a warning, no crash.
+            esp_err_t play_err = media_manager_play("/littlefs/intro.mp3");
+            ESP_LOGI(TAG, "media smoke play -> %s",
+                     esp_err_to_name(play_err));
+        }
     }
 
     log_heap_stats("post-init");
