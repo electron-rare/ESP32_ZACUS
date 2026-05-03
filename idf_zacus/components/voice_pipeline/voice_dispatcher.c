@@ -15,22 +15,44 @@
 
 static const char *TAG = "voice_disp";
 
-// Slice 8 keyword fast-path. Matched as case-insensitive ASCII-folded
-// substrings of the normalized STT text. Adding more variants here is
-// cheap (linear scan, ~8 entries). Keep this list FR-only for now —
-// we'll branch on a locale flag once the bridge sends one.
-static const char *const HINT_KEYWORDS[] = {
-    "indice",
-    "aide",
-    "hint",
-    "bloque",        // matches both "bloqué" and "bloque" after fold
-    "perdu",         // matches "perdu" / "perdue" via substring
-    "comment faire",
-    "je sais pas",
-    "sais pas",
+// Slice 13 keyword fast-path. Matched as case-insensitive ASCII-folded
+// substrings of the normalized STT text. Each entry has a `primary`
+// label (used in logs) plus a NULL-terminated `aliases` array of short
+// variants that absorb common whisper-large-v3-turbo mistranscriptions
+// (e.g. "ait" instead of "aide", "bloké" instead of "bloqué"). Each
+// alias must already be ASCII-folded — normalize_for_match() runs on
+// the input only. Lookup is linear (≤ ~30 short tokens total) and runs
+// once per final transcript, so cost is negligible vs. the strstr()
+// fallback we already paid before.
+//
+// Rule of thumb when adding aliases: keep them short (≤ 8 chars), keep
+// them post-fold (all lowercase, no diacritics), and keep them as a
+// strict superset of the previous slice-8/11 list — anything that
+// matched before MUST still match.
+typedef struct {
+    const char *primary;            // canonical, surfaced in logs
+    const char *const *aliases;     // NULL-terminated, includes primary
+} keyword_entry_t;
+
+// HINT keywords. Order = scan order. First hit wins (logged).
+static const char *const kAliasIndice[]      = {"indice", "indices", "endis", "andis", NULL};
+static const char *const kAliasAide[]        = {"aide", "aidez", "aidemoi", "ait", NULL};
+static const char *const kAliasHint[]        = {"hint", "hints", "ant", NULL};
+static const char *const kAliasBloque[]      = {"bloque", "bloke", "bloquai", "blok", "coince", NULL};
+static const char *const kAliasPerdu[]       = {"perdu", "perdue", "perds", NULL};
+static const char *const kAliasCommentFaire[] = {"comment faire", "comment fair", "commencer", NULL};
+static const char *const kAliasSaisPas[]     = {"sais pas", "sais pa", "saispas", NULL};
+
+static const keyword_entry_t kHintKeywords[] = {
+    {"indice",        kAliasIndice},
+    {"aide",          kAliasAide},
+    {"hint",          kAliasHint},
+    {"bloque",        kAliasBloque},
+    {"perdu",         kAliasPerdu},
+    {"comment faire", kAliasCommentFaire},
+    {"sais pas",      kAliasSaisPas},
+    {NULL, NULL},
 };
-static const size_t HINT_KEYWORDS_COUNT =
-    sizeof(HINT_KEYWORDS) / sizeof(HINT_KEYWORDS[0]);
 
 // Slice 11 (P5) failure-signal keywords. These hints map onto the
 // hints engine's /attempt_failed lifecycle endpoint (best-effort,
@@ -38,16 +60,22 @@ static const size_t HINT_KEYWORDS_COUNT =
 // dispatcher fires this BEFORE the hint fast-path so a single
 // "non c'est faux, donne-moi un indice" both bumps the counter and
 // requests a hint.
-static const char *const FAIL_KEYWORDS[] = {
-    "non",
-    "faux",
-    "mauvais",
-    "rate",          // matches "raté" / "rate" after fold
-    "marche pas",
-    "ca marche pas", // ASCII-folded "ça marche pas"
+static const char *const kAliasNon[]         = {"non", "nan", "nope", NULL};
+static const char *const kAliasFaux[]        = {"faux", "fausse", "fau", NULL};
+static const char *const kAliasMauvais[]     = {"mauvais", "mauvaise", "movais", NULL};
+static const char *const kAliasRate[]        = {"rate", "rater", "loupe", NULL};
+static const char *const kAliasMarchePas[]   = {"marche pas", "marchepas", "march pas", NULL};
+static const char *const kAliasCaMarchePas[] = {"ca marche pas", "ca march pas", "ca marchepas", NULL};
+
+static const keyword_entry_t kFailKeywords[] = {
+    {"non",            kAliasNon},
+    {"faux",           kAliasFaux},
+    {"mauvais",        kAliasMauvais},
+    {"rate",           kAliasRate},
+    {"marche pas",     kAliasMarchePas},
+    {"ca marche pas",  kAliasCaMarchePas},
+    {NULL, NULL},
 };
-static const size_t FAIL_KEYWORDS_COUNT =
-    sizeof(FAIL_KEYWORDS) / sizeof(FAIL_KEYWORDS[0]);
 
 // level == 0 = let the hints engine pick the escalation level via its
 // adaptive policy. See specs/AI_INTEGRATION_SPEC.md.
@@ -183,35 +211,54 @@ static void normalize_for_match(const char *src, char *dst, size_t cap) {
     dst[out] = '\0';
 }
 
-static bool contains_any(const char *normalized,
-                         const char *const *table, size_t count,
-                         const char **hit_out) {
-    if (!normalized || !*normalized) return false;
-    for (size_t i = 0; i < count; ++i) {
-        if (strstr(normalized, table[i]) != NULL) {
-            if (hit_out) *hit_out = table[i];
-            return true;
+// Iterate every alias of every entry; first hit wins. Returns the
+// matching entry's primary label and the matched alias for logging.
+static bool contains_any_alias(const char *normalized,
+                               const keyword_entry_t *table,
+                               const char **primary_out,
+                               const char **alias_out) {
+    if (!normalized || !*normalized || !table) return false;
+    for (const keyword_entry_t *e = table; e->primary != NULL; ++e) {
+        if (!e->aliases) continue;
+        for (const char *const *a = e->aliases; *a != NULL; ++a) {
+            if (**a == '\0') continue;
+            if (strstr(normalized, *a) != NULL) {
+                if (primary_out) *primary_out = e->primary;
+                if (alias_out)   *alias_out   = *a;
+                return true;
+            }
         }
     }
     return false;
 }
 
 static bool contains_keyword(const char *normalized) {
-    const char *hit = NULL;
-    if (contains_any(normalized, HINT_KEYWORDS, HINT_KEYWORDS_COUNT, &hit)) {
-        ESP_LOGI(TAG, "hint keyword hit: \"%s\"", hit);
+    const char *primary = NULL;
+    const char *alias   = NULL;
+    if (contains_any_alias(normalized, kHintKeywords, &primary, &alias)) {
+        ESP_LOGI(TAG, "hint keyword hit: primary=\"%s\" alias=\"%s\"",
+                 primary, alias);
         return true;
     }
     return false;
 }
 
 static bool contains_failure_signal(const char *normalized) {
-    const char *hit = NULL;
-    if (contains_any(normalized, FAIL_KEYWORDS, FAIL_KEYWORDS_COUNT, &hit)) {
-        ESP_LOGI(TAG, "failure keyword hit: \"%s\"", hit);
+    const char *primary = NULL;
+    const char *alias   = NULL;
+    if (contains_any_alias(normalized, kFailKeywords, &primary, &alias)) {
+        ESP_LOGI(TAG, "failure keyword hit: primary=\"%s\" alias=\"%s\"",
+                 primary, alias);
         return true;
     }
     return false;
+}
+
+static size_t count_entries(const keyword_entry_t *table) {
+    size_t n = 0;
+    if (!table) return 0;
+    for (const keyword_entry_t *e = table; e->primary != NULL; ++e) ++n;
+    return n;
 }
 
 // ── Hint result callback ────────────────────────────────────────────
@@ -238,8 +285,9 @@ static void on_hint_response(uint8_t puzzle_id, uint8_t level,
 esp_err_t voice_dispatcher_init(void) {
     if (s_initialized) return ESP_OK;
     s_initialized = true;
-    ESP_LOGI(TAG, "voice_dispatcher ready (%u FR hint keywords)",
-             (unsigned) HINT_KEYWORDS_COUNT);
+    ESP_LOGI(TAG, "voice_dispatcher ready (%u hint / %u fail FR keywords)",
+             (unsigned) count_entries(kHintKeywords),
+             (unsigned) count_entries(kFailKeywords));
     return ESP_OK;
 }
 
