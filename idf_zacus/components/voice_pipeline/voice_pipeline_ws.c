@@ -33,6 +33,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 
+// Slice 8: route final STT + LLM intent payloads into npc_engine via
+// the small dispatcher layer. The user-supplied stt_cb still fires in
+// parallel for back-compat (main.c keeps logging it).
+#include "voice_dispatcher.h"
+
 static const char *TAG = "voice_ws";
 
 #define WS_CONNECT_TIMEOUT_MS  5000
@@ -78,6 +83,10 @@ static void handle_text_message(const char *data, int len) {
         bool is_final = cJSON_IsBool(final) ? cJSON_IsTrue(final) : false;
         if (cJSON_IsString(text) && text->valuestring) {
             ESP_LOGI(TAG, "stt(final=%d): %s", is_final, text->valuestring);
+            // Slice 8: keyword fast-path → npc_engine_request_hint().
+            // The legacy user callback still fires below for callers
+            // that want their own logging / instrumentation.
+            voice_dispatcher_handle_stt(text->valuestring, is_final);
             if (s_ws.stt_cb) {
                 s_ws.stt_cb(text->valuestring, is_final, s_ws.stt_cb_ctx);
             }
@@ -85,10 +94,13 @@ static void handle_text_message(const char *data, int len) {
     } else if (strcmp(type->valuestring, "intent") == 0) {
         const cJSON *content = cJSON_GetObjectItemCaseSensitive(root, "content");
         const cJSON *model   = cJSON_GetObjectItemCaseSensitive(root, "model");
+        const char *content_str = cJSON_IsString(content) ? content->valuestring : NULL;
+        const char *model_str   = cJSON_IsString(model)   ? model->valuestring   : NULL;
         ESP_LOGI(TAG, "intent (model=%s): %s",
-                 cJSON_IsString(model)   ? model->valuestring   : "?",
-                 cJSON_IsString(content) ? content->valuestring : "?");
-        // Slice 7: log only — wiring intent into npc_engine is the next slice.
+                 model_str   ? model_str   : "?",
+                 content_str ? content_str : "?");
+        // Slice 8: hand off to the dispatcher (logs + best-effort cue).
+        voice_dispatcher_handle_intent(content_str, model_str);
     } else if (strcmp(type->valuestring, "error") == 0) {
         const cJSON *msg = cJSON_GetObjectItemCaseSensitive(root, "message");
         ESP_LOGW(TAG, "bridge error: %s",

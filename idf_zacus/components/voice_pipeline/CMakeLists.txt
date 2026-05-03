@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "voice_pipeline.c"
         "voice_pipeline_ws.c"
+        "voice_dispatcher.c"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS

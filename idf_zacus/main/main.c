@@ -41,6 +41,7 @@
 #include "npc_engine.h"
 #include "hints_client.h"
 #include "voice_pipeline.h"
+#include "voice_dispatcher.h"
 
 // Hints engine endpoint (slice 5). Hardcoded for now — slice 7 will move
 // this to NVS so the field operator can repoint the firmware without a flash.
@@ -93,17 +94,15 @@ static void on_voice_wake(const char *wake_word, void *user_ctx) {
     }
 }
 
-// Slice 7: STT callback. Runs on the WebSocket event-loop task — keep
-// it short and offload heavy work (intent dispatch, hint requests) to
-// the npc_engine via FreeRTOS queue in a follow-up slice. For now we
-// just log; on `final == true` the next slice will route the text into
-// `npc_engine_request_hint()` (or the keyword fast-path).
+// Slice 7/8: STT callback. Runs on the WebSocket event-loop task —
+// keep it short. The actual routing (keyword fast-path → hints engine,
+// non-keyword → defer to LLM intent path) is owned by voice_dispatcher,
+// which voice_pipeline_ws calls in parallel with this user callback.
+// We keep the log here as a diagnostic breadcrumb for field debugging.
 static void on_voice_stt(const char *text, bool final, void *user_ctx) {
     (void) user_ctx;
     ESP_LOGI(TAG, "STT(final=%d): %s", final ? 1 : 0,
              text ? text : "(null)");
-    // TODO(slice 8): if final && text, dispatch to npc_engine /
-    // hints_client through a queue so this callback stays non-blocking.
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -341,6 +340,15 @@ void app_main(void) {
             if (hints_err != ESP_OK) {
                 ESP_LOGW(TAG, "hints_client_init failed: %s — npc will use stub",
                          esp_err_to_name(hints_err));
+            }
+
+            // Slice 8: voice → npc_engine routing layer. Must come
+            // after npc_engine_init / hints_client_init so the hint
+            // fast-path lands on the real backend (fallback: local stub).
+            esp_err_t disp_err = voice_dispatcher_init();
+            if (disp_err != ESP_OK) {
+                ESP_LOGW(TAG, "voice_dispatcher_init failed: %s",
+                         esp_err_to_name(disp_err));
             }
 
             voice_pipeline_config_t voice_cfg;
