@@ -38,6 +38,7 @@
 
 #include "ota_server.h"
 #include "media_manager.h"
+#include "npc_engine.h"
 
 static const char *TAG = "zacus_main";
 
@@ -273,6 +274,23 @@ void app_main(void) {
             esp_err_t play_err = media_manager_play("/littlefs/intro.mp3");
             ESP_LOGI(TAG, "media smoke play -> %s",
                      esp_err_to_name(play_err));
+
+            // Slice 4: bring up the ported npc_engine. Cue table is empty
+            // at this stage — wiring the scenario IR-driven cue catalog is
+            // a follow-up slice. The engine still boots, accepts ticks
+            // (no-op when auto_evaluate is false), and is ready to receive
+            // trigger_cue calls from REST/diagnostic surfaces.
+            const npc_engine_config_t npc_cfg = {
+                .cues                = NULL,
+                .cue_count           = 0,
+                .auto_evaluate       = false,
+                .auto_play_decisions = false,
+            };
+            esp_err_t npc_err = npc_engine_init(&npc_cfg);
+            if (npc_err != ESP_OK) {
+                ESP_LOGE(TAG, "npc_engine_init failed: %s",
+                         esp_err_to_name(npc_err));
+            }
         }
     }
 
@@ -286,8 +304,15 @@ void app_main(void) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(60000));
         tick++;
+        const uint32_t uptime_ms = (uint32_t) esp_log_timestamp();
         ESP_LOGI(TAG, "heartbeat #%u — uptime=%llu s",
                  (unsigned) tick,
-                 (unsigned long long) (esp_log_timestamp() / 1000));
+                 (unsigned long long) (uptime_ms / 1000));
+        // Drive the slice-3/4 subsystems from the heartbeat. Once we have
+        // a real game loop these will move to a dedicated FreeRTOS task
+        // running at ~5 Hz; for now 60 s is enough to keep mood + media
+        // simulation state coherent without spamming the log.
+        media_manager_update(uptime_ms);
+        npc_engine_update(uptime_ms);
     }
 }

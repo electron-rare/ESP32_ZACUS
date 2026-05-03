@@ -7,6 +7,7 @@ idf_component_register(
         joltwallet__littlefs
         ota_server
         media_manager
+        npc_engine
         nvs_flash
         esp_timer
         esp_system
