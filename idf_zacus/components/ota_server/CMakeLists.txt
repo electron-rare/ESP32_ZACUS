@@ -5,7 +5,7 @@ idf_component_register(
         "include"
     REQUIRES
         esp_http_server
-        esp_ota_ops
+        app_update
         esp_timer
         esp_system
         nvs_flash

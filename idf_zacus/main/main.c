@@ -1,11 +1,17 @@
-// Zacus master — ESP-IDF entry point (P1 first slice).
+// Zacus master — ESP-IDF entry point (P1 slice 2).
 //
 // Responsibilities at this slice:
-//   1. Initialize NVS (required by Wi-Fi / esp_event later).
-//   2. Mount the LittleFS "storage" partition on /littlefs and list contents.
-//   3. Log heap stats (internal + PSRAM) for baseline measurement.
-//   4. Idle loop with periodic heartbeat (no deep sleep — keeps the inherited
-//      OTA server task alive once we wire it in P1 slice 2).
+//   1. Initialize NVS (required by Wi-Fi).
+//   2. Initialize esp_netif + default event loop.
+//   3. Read Wi-Fi creds from NVS namespace "wifi" (keys "ssid" / "pwd").
+//        - If creds present  : start STA, wait for IP_EVENT_STA_GOT_IP.
+//        - If creds absent   : fall back to open AP "zacus-setup" so the
+//                              operator can still reach the OTA endpoint
+//                              (and provision creds in a later slice).
+//   4. Once the network is up, call ota_server_init() so the inherited
+//      HTTP server (port 80) starts answering /version, /status, /ota.
+//   5. Mount the LittleFS "storage" partition on /littlefs and list it.
+//   6. Log heap stats + idle loop with periodic heartbeat (60 s).
 //
 // Subsequent slices port the NPC engine, voice pipeline, media manager, etc.
 // See docs/superpowers/specs/2026-05-03-voice-pipeline-esp-sr-design.md.
@@ -17,15 +23,33 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_err.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
 #include "esp_littlefs.h"
 #include "nvs_flash.h"
+#include "nvs.h"
+
+#include "ota_server.h"
 
 static const char *TAG = "zacus_main";
+
+// Soft-AP fallback when no creds in NVS yet.
+#define ZACUS_FALLBACK_AP_SSID  "zacus-setup"
+#define ZACUS_FALLBACK_AP_CHAN  6
+#define ZACUS_STA_MAX_RETRY     8
+
+// ─── Wi-Fi state ─────────────────────────────────────────────────────────────
+static EventGroupHandle_t s_wifi_event_group;
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+static int s_sta_retry = 0;
 
 // ─── ota_server externs (real implementations come with the puzzle/master
 //     state in a later P1 slice; for now we provide trivial stubs so the
@@ -85,10 +109,130 @@ static void list_littlefs_root(void) {
     ESP_LOGI(TAG, "LittleFS root contains %d entries", count);
 }
 
+// ─── Wi-Fi: NVS creds + event handler ────────────────────────────────────────
+
+// Reads NVS namespace "wifi" keys "ssid" + "pwd". Returns ESP_OK if both
+// keys are present and ssid is non-empty. Buffers are NUL-terminated.
+static esp_err_t load_wifi_creds(char *ssid, size_t ssid_len,
+                                 char *pwd,  size_t pwd_len) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("wifi", NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "NVS namespace 'wifi' not found (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t len = ssid_len;
+    err = nvs_get_str(h, "ssid", ssid, &len);
+    if (err != ESP_OK || len <= 1) {
+        ESP_LOGI(TAG, "NVS 'wifi/ssid' missing (%s)", esp_err_to_name(err));
+        nvs_close(h);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    len = pwd_len;
+    err = nvs_get_str(h, "pwd", pwd, &len);
+    if (err != ESP_OK) {
+        // Empty password is acceptable (open network).
+        pwd[0] = '\0';
+    }
+    nvs_close(h);
+    return ESP_OK;
+}
+
+static void wifi_event_handler(void *arg, esp_event_base_t base,
+                               int32_t id, void *data) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "STA start — connecting…");
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (s_sta_retry < ZACUS_STA_MAX_RETRY) {
+            s_sta_retry++;
+            ESP_LOGW(TAG, "STA disconnected — retry %d/%d", s_sta_retry, ZACUS_STA_MAX_RETRY);
+            esp_wifi_connect();
+        } else {
+            ESP_LOGE(TAG, "STA give up after %d retries", ZACUS_STA_MAX_RETRY);
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *) data;
+        ESP_LOGI(TAG, "STA got IP " IPSTR, IP2STR(&event->ip_info.ip));
+        s_sta_retry = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
+        ESP_LOGI(TAG, "AP started — SSID=\"%s\" (open)", ZACUS_FALLBACK_AP_SSID);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
+        ESP_LOGI(TAG, "AP: client joined");
+    }
+}
+
+// Returns true if STA connected, false if AP fallback (or STA gave up).
+static bool wifi_bring_up(void) {
+    s_wifi_event_group = xEventGroupCreate();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
+
+    char ssid[33] = {0};
+    char pwd[65]  = {0};
+    bool have_creds = (load_wifi_creds(ssid, sizeof(ssid), pwd, sizeof(pwd)) == ESP_OK);
+
+    if (have_creds) {
+        ESP_LOGI(TAG, "Wi-Fi: STA mode (ssid=\"%s\")", ssid);
+        esp_netif_create_default_wifi_sta();
+
+        wifi_config_t wc = {0};
+        strncpy((char *) wc.sta.ssid,     ssid, sizeof(wc.sta.ssid) - 1);
+        strncpy((char *) wc.sta.password, pwd,  sizeof(wc.sta.password) - 1);
+        wc.sta.threshold.authmode = WIFI_AUTH_OPEN;  // accept any; we don't pin
+
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
+        ESP_ERROR_CHECK(esp_wifi_start());
+
+        EventBits_t bits = xEventGroupWaitBits(
+            s_wifi_event_group,
+            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+            pdFALSE, pdFALSE,
+            pdMS_TO_TICKS(20000));
+
+        if (bits & WIFI_CONNECTED_BIT) {
+            return true;
+        }
+        ESP_LOGW(TAG, "STA failed within 20 s — fallback to AP");
+        esp_wifi_stop();
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi: no creds in NVS, starting AP fallback");
+    }
+
+    // AP fallback (open network — provisioning will be added later).
+    esp_netif_create_default_wifi_ap();
+
+    wifi_config_t ap_cfg = {0};
+    strncpy((char *) ap_cfg.ap.ssid, ZACUS_FALLBACK_AP_SSID, sizeof(ap_cfg.ap.ssid) - 1);
+    ap_cfg.ap.ssid_len       = strlen(ZACUS_FALLBACK_AP_SSID);
+    ap_cfg.ap.channel        = ZACUS_FALLBACK_AP_CHAN;
+    ap_cfg.ap.max_connection = 4;
+    ap_cfg.ap.authmode       = WIFI_AUTH_OPEN;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    return false;
+}
+
 // ─── app_main ────────────────────────────────────────────────────────────────
 
 void app_main(void) {
-    ESP_LOGI(TAG, "Zacus master booting (ESP-IDF scaffold, P1 first slice)");
+    ESP_LOGI(TAG, "Zacus master booting (ESP-IDF scaffold, P1 slice 2)");
 
     log_heap_stats("boot");
 
@@ -100,11 +244,24 @@ void app_main(void) {
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "NVS initialized");
 
+    bool sta_ok = wifi_bring_up();
+    ESP_LOGI(TAG, "Wi-Fi up (mode=%s)", sta_ok ? "STA" : "AP-fallback");
+
+    esp_err_t ota_err = ota_server_init();
+    if (ota_err != ESP_OK) {
+        ESP_LOGE(TAG, "ota_server_init failed: %s", esp_err_to_name(ota_err));
+    } else {
+        ESP_LOGI(TAG, "OTA server listening on :%d", OTA_SERVER_PORT);
+    }
+
     if (mount_littlefs() == ESP_OK) {
         list_littlefs_root();
     }
 
     log_heap_stats("post-init");
+
+    // Mark this firmware valid only after subsystems came up cleanly.
+    ota_server_mark_valid();
 
     ESP_LOGI(TAG, "entering idle loop (heartbeat every 60 s)");
     uint32_t tick = 0;

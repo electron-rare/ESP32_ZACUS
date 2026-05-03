@@ -226,12 +226,12 @@ static esp_err_t handle_ota_upload(httpd_req_t* req) {
     // Rate limiting
     int64_t now = esp_timer_get_time() / 1000000;
     if (s_status.last_ota_time > 0 && (now - s_status.last_ota_time) < OTA_RATE_LIMIT_SECS) {
-        httpd_resp_send_err(req, HTTPD_429_TOO_MANY_REQUESTS, "Rate limited: wait 60s");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Rate limited: wait 60s");
         return ESP_FAIL;
     }
 
     if (s_status.state != OTA_STATE_IDLE) {
-        httpd_resp_send_err(req, HTTPD_409_CONFLICT, "OTA already in progress");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "OTA already in progress");
         return ESP_FAIL;
     }
 

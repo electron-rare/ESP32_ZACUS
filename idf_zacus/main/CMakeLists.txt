@@ -4,9 +4,12 @@ idf_component_register(
     INCLUDE_DIRS
         "."
     REQUIRES
-        esp_littlefs
+        joltwallet__littlefs
         ota_server
         nvs_flash
         esp_timer
         esp_system
+        esp_wifi
+        esp_netif
+        esp_event
 )
