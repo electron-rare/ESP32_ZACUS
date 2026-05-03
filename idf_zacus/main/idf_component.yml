@@ -9,3 +9,8 @@ dependencies:
   ## A custom "Professeur Zacus" model is out of scope for this slice
   ## (P4 of the voice spec, requires Espressif training round-trip).
   espressif/esp-sr: "~2.0"
+  ## Slice 7: WebSocket client used by voice_pipeline to stream PCM
+  ## chunks to the MacStudio voice-bridge (`ws://studio:8200/voice/ws`)
+  ## and receive STT transcripts. The 1.4 line is the current stable
+  ## series for IDF 5.x (event loop based, supports binary frames).
+  espressif/esp_websocket_client: "~1.4"

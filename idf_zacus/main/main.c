@@ -46,6 +46,12 @@
 // this to NVS so the field operator can repoint the firmware without a flash.
 #define ZACUS_HINTS_BASE_URL  "http://192.168.0.150:8302"
 
+// Slice 7: voice-bridge WebSocket on the MacStudio (Tailscale address).
+// Hardcoded here for the same reason as ZACUS_HINTS_BASE_URL — moves to
+// NVS in a follow-up slice. The bridge endpoint is documented in
+// docs/superpowers/specs/2026-05-03-voice-pipeline-esp-sr-design.md.
+#define ZACUS_VOICE_BRIDGE_WS_URL  "ws://100.116.92.12:8200/voice/ws"
+
 static const char *TAG = "zacus_main";
 
 // Soft-AP fallback when no creds in NVS yet.
@@ -85,6 +91,19 @@ static void on_voice_wake(const char *wake_word, void *user_ctx) {
         ESP_LOGW(TAG, "voice_pipeline_start_capture from wake cb: %s",
                  esp_err_to_name(err));
     }
+}
+
+// Slice 7: STT callback. Runs on the WebSocket event-loop task — keep
+// it short and offload heavy work (intent dispatch, hint requests) to
+// the npc_engine via FreeRTOS queue in a follow-up slice. For now we
+// just log; on `final == true` the next slice will route the text into
+// `npc_engine_request_hint()` (or the keyword fast-path).
+static void on_voice_stt(const char *text, bool final, void *user_ctx) {
+    (void) user_ctx;
+    ESP_LOGI(TAG, "STT(final=%d): %s", final ? 1 : 0,
+             text ? text : "(null)");
+    // TODO(slice 8): if final && text, dispatch to npc_engine /
+    // hints_client through a queue so this callback stays non-blocking.
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -331,7 +350,12 @@ void app_main(void) {
             // hot from boot — saying "Hi ESP" fires the callback below.
             voice_cfg.enable_wake_word   = true;
             voice_cfg.auto_start_capture = true;
+            // Slice 7: stream post-AFE PCM to the MacStudio voice-bridge
+            // over WebSocket once the wake word fires. The bridge runs
+            // STT (whisper) and may auto-route to the LLM intent layer.
+            voice_cfg.voice_bridge_ws_url = ZACUS_VOICE_BRIDGE_WS_URL;
             voice_pipeline_set_wake_callback(on_voice_wake, NULL);
+            voice_pipeline_set_stt_callback(on_voice_stt, NULL);
             esp_err_t voice_err = voice_pipeline_init(&voice_cfg);
             if (voice_err != ESP_OK) {
                 ESP_LOGW(TAG, "voice_pipeline_init failed: %s",

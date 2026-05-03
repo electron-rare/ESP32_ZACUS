@@ -1,16 +1,18 @@
 // voice_pipeline — ESP-IDF implementation. See voice_pipeline.h for the
-// scope of slices 5 and 6. The AFE / WakeNet integration is gated on
+// scope of slices 5, 6 and 7. The AFE / WakeNet integration is gated on
 // `cfg.enable_wake_word`; if init fails (PSRAM exhausted, model
 // partition absent, etc.) we log + degrade silently to the slice-5
 // I2S-only capture path so the rest of the firmware still boots.
 
 #include "voice_pipeline.h"
+#include "voice_pipeline_ws.h"
 
 #include <string.h>
 
 #include "driver/i2s_std.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -36,6 +38,15 @@ static const char *TAG = "voice_pipeline";
 #define CAPTURE_TASK_PRIO    5
 #define CAPTURE_CHUNK_BYTES  1024  // fallback (slice-5 path) — 16-bit @16 kHz = 32 ms slice
 
+// Slice 7: end-of-utterance detection. AFE feed chunk size at 16 kHz /
+// AFE_MODE_LOW_COST is typically 512 samples = 32 ms. 50 consecutive
+// silence chunks ≈ 1.5 s of silence, which matches the spec's
+// "sustained ~1.5 s" end-of-speech criterion. A safety cap stops a
+// runaway stream after ~10 s of audio so a stuck VAD never blocks the
+// pipeline forever.
+#define END_SILENCE_CHUNKS         50
+#define STREAMING_MAX_CHUNKS       (16000 * 10 / 512)  // ~10 s
+
 static struct {
     bool                     ready;
     voice_pipeline_config_t  cfg;
@@ -56,6 +67,16 @@ static struct {
     char                     wake_word_name[32];
     int                      afe_feed_chunk_samples;   // per-channel
     int                      afe_feed_channel_num;     // mic + ref
+    int                      afe_fetch_chunk_samples;  // post-AFE, what we stream
+
+    // Slice 7: streaming state. `stream_active` mirrors voice_ws_is_streaming
+    // but is owned by the capture task so we don't race with the WS event
+    // loop on transitions. `silence_chunks` counts sustained AFE_VAD_SILENCE
+    // fetches; reaching VAD_SILENCE_CHUNKS_TO_END closes the upload.
+    bool                     stream_active;
+    uint32_t                 silence_chunks;
+    uint32_t                 streamed_chunks;
+    char                     session_id[32];
 } s_pipe = {
     .state = VOICE_STATE_IDLE,
 };
@@ -68,6 +89,7 @@ void voice_pipeline_default_config(voice_pipeline_config_t *out) {
     out->sample_rate_hz     = 16000;
     out->auto_start_capture = false;
     out->enable_wake_word   = false;
+    out->voice_bridge_ws_url = NULL;
 }
 
 bool voice_pipeline_wake_word_active(void) {
@@ -78,6 +100,77 @@ esp_err_t voice_pipeline_set_wake_callback(voice_wake_callback_t cb,
                                            void *user_ctx) {
     s_pipe.wake_cb     = cb;
     s_pipe.wake_cb_ctx = user_ctx;
+    return ESP_OK;
+}
+
+esp_err_t voice_pipeline_set_stt_callback(voice_stt_callback_t cb,
+                                          void *user_ctx) {
+    voice_ws_set_stt_callback(cb, user_ctx);
+    return ESP_OK;
+}
+
+bool voice_pipeline_is_streaming(void) {
+    return s_pipe.stream_active;
+}
+
+static void session_id_init(void) {
+    uint8_t mac[6] = {0};
+    if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+        snprintf(s_pipe.session_id, sizeof(s_pipe.session_id),
+                 "%02x%02x%02x%02x%02x%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        strncpy(s_pipe.session_id, "unknown",
+                sizeof(s_pipe.session_id) - 1);
+        s_pipe.session_id[sizeof(s_pipe.session_id) - 1] = '\0';
+    }
+}
+
+// Open the WebSocket lazily on the first wake (or on
+// voice_pipeline_start_streaming). Returns ESP_OK on success or if the
+// stream is already open.
+static esp_err_t streaming_begin(void) {
+    if (s_pipe.stream_active) return ESP_OK;
+    if (!voice_ws_is_configured()) return ESP_ERR_INVALID_STATE;
+
+    esp_err_t err = voice_ws_open_streaming();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "voice_ws_open_streaming failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+    s_pipe.stream_active   = true;
+    s_pipe.silence_chunks  = 0;
+    s_pipe.streamed_chunks = 0;
+    ESP_LOGI(TAG, "streaming started");
+    return ESP_OK;
+}
+
+static void streaming_end(const char *reason) {
+    if (!s_pipe.stream_active) return;
+    ESP_LOGI(TAG, "streaming end (%s) — sent %u chunks, silence=%u",
+             reason ? reason : "?",
+             (unsigned) s_pipe.streamed_chunks,
+             (unsigned) s_pipe.silence_chunks);
+    voice_ws_close_streaming();
+    s_pipe.stream_active   = false;
+    s_pipe.silence_chunks  = 0;
+    s_pipe.streamed_chunks = 0;
+    voice_pipeline_set_state(VOICE_STATE_IDLE);
+}
+
+esp_err_t voice_pipeline_start_streaming(void) {
+    if (!s_pipe.ready) return ESP_ERR_INVALID_STATE;
+    if (!voice_ws_is_configured()) {
+        ESP_LOGW(TAG, "start_streaming: no voice_bridge_ws_url configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+    voice_pipeline_set_state(VOICE_STATE_LISTENING);
+    return streaming_begin();
+}
+
+esp_err_t voice_pipeline_stop_streaming(void) {
+    streaming_end("manual_stop");
     return ESP_OK;
 }
 
@@ -169,12 +262,14 @@ static esp_err_t wake_word_setup(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    s_pipe.afe_feed_chunk_samples = s_pipe.afe_iface->get_feed_chunksize(s_pipe.afe_data);
-    s_pipe.afe_feed_channel_num   = s_pipe.afe_iface->get_feed_channel_num(s_pipe.afe_data);
+    s_pipe.afe_feed_chunk_samples  = s_pipe.afe_iface->get_feed_chunksize(s_pipe.afe_data);
+    s_pipe.afe_feed_channel_num    = s_pipe.afe_iface->get_feed_channel_num(s_pipe.afe_data);
+    s_pipe.afe_fetch_chunk_samples = s_pipe.afe_iface->get_fetch_chunksize(s_pipe.afe_data);
 
-    ESP_LOGI(TAG, "AFE up: feed_chunk=%d samples × %d ch, sample_rate=%d Hz",
+    ESP_LOGI(TAG, "AFE up: feed_chunk=%d samples × %d ch, fetch_chunk=%d, sample_rate=%d Hz",
              s_pipe.afe_feed_chunk_samples,
              s_pipe.afe_feed_channel_num,
+             s_pipe.afe_fetch_chunk_samples,
              s_pipe.afe_iface->get_samp_rate(s_pipe.afe_data));
     if (s_pipe.afe_iface->print_pipeline) {
         s_pipe.afe_iface->print_pipeline(s_pipe.afe_data);
@@ -196,7 +291,8 @@ static void wake_word_teardown(void) {
 
 // Capture task. Two modes:
 //   * AFE active (esp-sr loaded)  : feed I2S into AFE, fetch results,
-//                                   detect wake → fire callback.
+//                                   detect wake → fire callback,
+//                                   stream post-AFE PCM until VAD silence.
 //   * AFE inactive (slice-5 stub) : log a heartbeat every ~1.6 s.
 static void capture_task(void *pv) {
     if (voice_pipeline_wake_word_active()) {
@@ -250,12 +346,56 @@ static void capture_task(void *pv) {
                     if (s_pipe.wake_cb) {
                         s_pipe.wake_cb(word, s_pipe.wake_cb_ctx);
                     }
+                    // Slice 7: open the WS stream as soon as the wake
+                    // fires so the player's first words make it across.
+                    if (voice_ws_is_configured() && !s_pipe.stream_active) {
+                        if (streaming_begin() != ESP_OK) {
+                            ESP_LOGW(TAG, "streaming_begin failed at wake — "
+                                          "returning to IDLE");
+                            voice_pipeline_set_state(VOICE_STATE_IDLE);
+                        }
+                    }
+                }
+
+                // Slice 7: while streaming, push the post-AFE PCM out
+                // and watch the VAD for end-of-speech. `res->data` is
+                // the cleaned, single-channel int16 buffer of length
+                // `afe_fetch_chunk_samples`.
+                if (s_pipe.stream_active && res->data && res->data_size > 0) {
+                    esp_err_t serr = voice_ws_send_chunk(
+                        res->data, res->data_size / sizeof(int16_t));
+                    if (serr != ESP_OK) {
+                        ESP_LOGW(TAG, "send_chunk err %s — closing stream",
+                                 esp_err_to_name(serr));
+                        streaming_end("send_error");
+                    } else {
+                        s_pipe.streamed_chunks++;
+
+                        // res->vad_state is a `vad_state_t` (VAD_SILENCE = 0,
+                        // VAD_SPEECH = 1). The legacy `AFE_VAD_*` enum is
+                        // marked deprecated in esp_afe_sr_iface.h.
+                        if (res->vad_state == VAD_SILENCE) {
+                            s_pipe.silence_chunks++;
+                        } else {
+                            s_pipe.silence_chunks = 0;
+                        }
+
+                        if (s_pipe.silence_chunks >= END_SILENCE_CHUNKS) {
+                            streaming_end("vad_silence");
+                        } else if (s_pipe.streamed_chunks >= STREAMING_MAX_CHUNKS) {
+                            streaming_end("max_duration");
+                        }
+                    }
                 }
             }
 
             if (++feeds % 100 == 0) {
                 ESP_LOGD(TAG, "AFE feed heartbeat: %u chunks", (unsigned) feeds);
             }
+        }
+        // Make sure we don't leak an open WS if capture is being torn down.
+        if (s_pipe.stream_active) {
+            streaming_end("capture_stop");
         }
         free(feed_buf);
     } else {
@@ -294,6 +434,8 @@ esp_err_t voice_pipeline_init(const voice_pipeline_config_t *config) {
     }
     s_pipe.cfg = cfg;
 
+    session_id_init();
+
     esp_err_t err = i2s_setup();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "i2s setup failed: %s — staying idle without capture",
@@ -316,12 +458,29 @@ esp_err_t voice_pipeline_init(const voice_pipeline_config_t *config) {
         }
     }
 
+    // Slice 7: configure the WS layer if the caller provided a URL.
+    // The actual connection is opened lazily on the first wake (or
+    // on voice_pipeline_start_streaming).
+    if (cfg.voice_bridge_ws_url && *cfg.voice_bridge_ws_url) {
+        esp_err_t wsc = voice_ws_configure(cfg.voice_bridge_ws_url,
+                                           s_pipe.session_id,
+                                           cfg.sample_rate_hz);
+        if (wsc != ESP_OK) {
+            ESP_LOGW(TAG, "voice_ws_configure failed: %s — streaming disabled",
+                     esp_err_to_name(wsc));
+        } else {
+            ESP_LOGI(TAG, "voice-bridge streaming wired: %s",
+                     cfg.voice_bridge_ws_url);
+        }
+    }
+
     s_pipe.ready = true;
     s_pipe.state = VOICE_STATE_IDLE;
-    ESP_LOGI(TAG, "ready (BCLK=%d WS=%d DIN=%d @%u Hz, wake=%s)",
+    ESP_LOGI(TAG, "ready (BCLK=%d WS=%d DIN=%d @%u Hz, wake=%s, stream=%s)",
              cfg.i2s_bclk_pin, cfg.i2s_ws_pin, cfg.i2s_din_pin,
              (unsigned) cfg.sample_rate_hz,
-             voice_pipeline_wake_word_active() ? s_pipe.wake_word_name : "off");
+             voice_pipeline_wake_word_active() ? s_pipe.wake_word_name : "off",
+             voice_ws_is_configured() ? "on" : "off");
 
     if (cfg.auto_start_capture) {
         return voice_pipeline_start_capture();
