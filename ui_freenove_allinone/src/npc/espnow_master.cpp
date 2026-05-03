@@ -42,11 +42,14 @@ struct MasterRecvItem {
 // Wi-Fi ISR callbacks
 // ---------------------------------------------------------------------------
 
-static void on_recv(const esp_now_recv_info_t *info,
+// Note: SDK Arduino-ESP32 3.20014 uses the legacy callback signature
+// (const uint8_t* mac_addr, ...). IDF v5 introduced esp_now_recv_info_t.
+// Use the legacy form here so the firmware builds with the pinned SDK.
+static void on_recv(const uint8_t *mac_addr,
                     const uint8_t *data, int len)
 {
     MasterRecvItem item;
-    memcpy(item.src_mac, info->src_addr, 6);
+    memcpy(item.src_mac, mac_addr, 6);
     int copy = len < (int)sizeof(item.data) ? len : (int)sizeof(item.data);
     memcpy(item.data, data, copy);
     item.len = copy;

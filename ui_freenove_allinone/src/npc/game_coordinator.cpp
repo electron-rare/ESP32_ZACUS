@@ -323,8 +323,8 @@ void game_coordinator_tick(void) {
     }
 }
 
-game_phase_t game_coordinator_phase(void) {
-    return (game_phase_t)s_game.phase;
+int game_coordinator_phase(void) {
+    return (int)s_game.phase;
 }
 
 uint32_t game_coordinator_score(void) {

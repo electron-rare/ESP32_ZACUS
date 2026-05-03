@@ -7783,8 +7783,15 @@ void setup() {
   }
   g_next_espnow_discovery_ms = millis() + 2000U;
 
-  // Voice pipeline — connect to voice bridge server
-  {
+  // Voice pipeline — connect to voice bridge server.
+  // Skip when network boot is deferred: voiceWsConnect() calls into lwip
+  // (s_ws.begin -> tcpip_send_msg) which panics with "Invalid mbox" if the
+  // TCP/IP stack is not yet initialised. Same applies to espnow-only mode.
+  if (g_boot_network_deferred) {
+    Serial.println("[VOICE] init skipped (network_boot_deferred=1)");
+  } else if (kBootEspNowOnlyMode) {
+    Serial.println("[VOICE] init skipped (espnow_only_mode=1)");
+  } else {
     zacus::voice::VoiceWsConfig voice_cfg;
     voice_cfg.server_url = "ws://192.168.0.120:8200/voice/ws";
     voice_cfg.device_id = g_network_cfg.hostname[0] != '\0'
