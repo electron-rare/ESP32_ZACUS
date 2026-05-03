@@ -37,6 +37,7 @@
 // the small dispatcher layer. The user-supplied stt_cb still fires in
 // parallel for back-compat (main.c keeps logging it).
 #include "voice_dispatcher.h"
+#include "voice_pipeline.h"
 
 static const char *TAG = "voice_ws";
 
@@ -62,6 +63,10 @@ static struct {
     esp_websocket_client_handle_t client;
     EventGroupHandle_t            ev;
     bool                          streaming;
+    // Slice 9b: track whether the bridge announced a speak_* sequence.
+    // We forward incoming binary frames to voice_pipeline_play_chunk()
+    // only between speak_start and speak_end.
+    bool                          in_speak;
 } s_ws = {0};
 
 static void handle_text_message(const char *data, int len) {
@@ -101,10 +106,47 @@ static void handle_text_message(const char *data, int len) {
                  content_str ? content_str : "?");
         // Slice 8: hand off to the dispatcher (logs + best-effort cue).
         voice_dispatcher_handle_intent(content_str, model_str);
+    } else if (strcmp(type->valuestring, "speak_start") == 0) {
+        // Slice 9b: bridge is about to stream PCM TTS reply. Lift the
+        // playback gate, configure the I2S TX clock to the announced
+        // sample rate (typically 24 kHz from F5-TTS).
+        const cJSON *sr = cJSON_GetObjectItemCaseSensitive(root, "sample_rate");
+        const cJSON *fmt = cJSON_GetObjectItemCaseSensitive(root, "format");
+        uint32_t rate = (cJSON_IsNumber(sr) && sr->valueint > 0)
+            ? (uint32_t) sr->valueint : 24000;
+        const char *fmt_s = (cJSON_IsString(fmt) && fmt->valuestring)
+            ? fmt->valuestring : "pcm_s16";
+        ESP_LOGI(TAG, "speak_start: sr=%u fmt=%s", (unsigned) rate, fmt_s);
+        esp_err_t pe = voice_pipeline_play_start(rate, fmt_s);
+        if (pe == ESP_OK) {
+            s_ws.in_speak = true;
+        } else {
+            ESP_LOGW(TAG, "speak_start: voice_pipeline_play_start=%s — "
+                          "TTS playback unavailable, dropping audio frames",
+                     esp_err_to_name(pe));
+            s_ws.in_speak = false;
+        }
+    } else if (strcmp(type->valuestring, "speak_end") == 0) {
+        const cJSON *dur = cJSON_GetObjectItemCaseSensitive(root, "duration_ms");
+        const cJSON *backend = cJSON_GetObjectItemCaseSensitive(root, "backend");
+        const cJSON *lat = cJSON_GetObjectItemCaseSensitive(root, "latency_ms");
+        ESP_LOGI(TAG, "speak_end: duration=%dms backend=%s first_chunk_lat=%dms",
+                 cJSON_IsNumber(dur) ? dur->valueint : 0,
+                 (cJSON_IsString(backend) && backend->valuestring) ? backend->valuestring : "?",
+                 cJSON_IsNumber(lat) ? lat->valueint : 0);
+        if (s_ws.in_speak) {
+            voice_pipeline_play_end();
+            s_ws.in_speak = false;
+        }
     } else if (strcmp(type->valuestring, "error") == 0) {
         const cJSON *msg = cJSON_GetObjectItemCaseSensitive(root, "message");
         ESP_LOGW(TAG, "bridge error: %s",
                  cJSON_IsString(msg) ? msg->valuestring : "(no message)");
+        // If an error arrives mid-speak, close the playback gate cleanly.
+        if (s_ws.in_speak) {
+            voice_pipeline_play_end();
+            s_ws.in_speak = false;
+        }
     } else {
         ESP_LOGD(TAG, "rx: unknown type=%s", type->valuestring);
     }
@@ -132,9 +174,13 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
     case WEBSOCKET_EVENT_DATA:
         if (!data) break;
         // op_code 0x1 = text frame, 0x2 = binary, 0x8 = close, 0x9/0xA = ping/pong.
-        // The voice-bridge only sends us text; ignore binary just in case.
         if (data->op_code == 0x01 && data->data_len > 0) {
             handle_text_message((const char *) data->data_ptr, data->data_len);
+        } else if (data->op_code == 0x02 && data->data_len > 0
+                   && s_ws.in_speak) {
+            // Slice 9b: PCM TTS chunk from the bridge. Forward to I2S TX.
+            voice_pipeline_play_chunk((const uint8_t *) data->data_ptr,
+                                      (size_t) data->data_len);
         }
         break;
     case WEBSOCKET_EVENT_ERROR:
