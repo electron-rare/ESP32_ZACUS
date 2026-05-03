@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "main.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_littlefs
+        ota_server
+        nvs_flash
+        esp_timer
+        esp_system
+)

@@ -1,0 +1,5 @@
+## Managed component manifest for the Zacus master `main` component.
+## P1 first slice — keep deps minimal; voice / NPC / vision deps come later.
+
+dependencies:
+  joltwallet/littlefs: "^1.14"
