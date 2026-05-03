@@ -18,7 +18,7 @@
 //   * wake event routes through a user callback and auto-transitions
 //     the pipeline into VOICE_STATE_LISTENING.
 //
-// Slice 7 deliverable (this revision):
+// Slice 7 deliverable:
 //   * managed dependency on `espressif/esp_websocket_client` (~1.4)
 //   * after a wake event, post-AFE PCM chunks (16 kHz mono int16) are
 //     streamed as binary WebSocket frames to the MacStudio voice-bridge
@@ -29,6 +29,18 @@
 //   * STT transcripts received from the bridge fan out through a new
 //     `voice_pipeline_set_stt_callback`. The hint/intent dispatch
 //     itself stays in npc_engine (out of scope for this slice).
+//
+// Slice 9 deliverable (this revision):
+//   * TTS playback from the voice-bridge: PCM 16-bit mono @ 24 kHz
+//     received as binary WebSocket frames between
+//     `{"type":"speak_start", ...}` and `{"type":"speak_end", ...}`.
+//   * I2S TX bring-up on I2S_NUM_1 (MAX98357A DAC: BCLK / LRC / DIN).
+//     Disabled by default — opt-in via `enable_tts_playback`.
+//   * mute-during-TTS gate: while `state == VOICE_STATE_SPEAKING`, the
+//     capture task keeps draining I2S input but does NOT feed AFE,
+//     guaranteeing no wake re-trigger from the speaker echo.
+//   * state machine: LISTENING → SPEAKING on `speak_start`,
+//     SPEAKING → IDLE on `speak_end`.
 //
 // The HTTP plumbing to the hints engine still lives in the separate
 // hints_client component to avoid a circular dependency with npc_engine.
@@ -85,6 +97,16 @@ typedef struct {
     // the string must outlive `voice_pipeline_init` (typically a static
     // `#define` in main.c).
     const char *voice_bridge_ws_url;
+
+    // Slice 9: TTS playback configuration. The voice-bridge streams
+    // back PCM 16-bit mono at 24 kHz between `speak_start` and
+    // `speak_end`. We render it on I2S_NUM_1 driving a MAX98357A class-D
+    // DAC (3-pin I2S: BCLK / LRC / DIN). Opt-in to keep slice-7-only
+    // builds bit-identical.
+    bool enable_tts_playback;
+    int  i2s_out_bclk_pin;       // GPIO11 default (Freenove convention)
+    int  i2s_out_lrc_pin;        // GPIO12 default (LRCK / WS)
+    int  i2s_out_din_pin;        // GPIO13 default (DIN to DAC)
 } voice_pipeline_config_t;
 
 // Reasonable defaults for a Freenove ESP32-S3 + INMP441 wiring. Override per
@@ -133,6 +155,28 @@ esp_err_t voice_pipeline_stop_streaming(void);
 // True between voice_pipeline_start_streaming and the moment the
 // pipeline detected end-of-speech (or stop_streaming was called).
 bool voice_pipeline_is_streaming(void);
+
+// Slice 9 — TTS playback API. Called from the WS layer when the
+// voice-bridge announces / streams / closes a `speak_*` exchange.
+//
+// `voice_pipeline_play_start` reconfigures the I2S TX clock if the
+// requested `sample_rate` differs from the current one and enables the
+// channel. Transitions the state machine to VOICE_STATE_SPEAKING which
+// activates the mute gate (mic input keeps draining I2S but is NOT
+// fed to AFE).
+//
+// `voice_pipeline_play_chunk` writes PCM bytes (16-bit mono LE) to
+// the DAC. `len` is in bytes. Blocks up to 100 ms in the I2S DMA
+// queue.
+//
+// `voice_pipeline_play_end` disables the TX channel and returns the
+// state machine to VOICE_STATE_IDLE so the next wake can fire.
+//
+// All three are no-ops (return ESP_ERR_INVALID_STATE) if
+// `enable_tts_playback` was false at init.
+esp_err_t voice_pipeline_play_start(uint32_t sample_rate, const char *format);
+esp_err_t voice_pipeline_play_chunk(const uint8_t *buf, size_t len);
+esp_err_t voice_pipeline_play_end(void);
 
 #ifdef __cplusplus
 }

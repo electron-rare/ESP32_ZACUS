@@ -51,6 +51,11 @@ static struct {
     bool                     ready;
     voice_pipeline_config_t  cfg;
     i2s_chan_handle_t        rx_chan;
+    // Slice 9: I2S TX channel for TTS playback (MAX98357A DAC). NULL
+    // if `enable_tts_playback == false` or alloc/init failed.
+    i2s_chan_handle_t        tx_chan;
+    bool                     tx_enabled;        // channel currently enabled
+    uint32_t                 tx_sample_rate;    // current configured rate
     voice_state_t            state;
     TaskHandle_t             capture_task;
     bool                     capture_run;
@@ -90,6 +95,13 @@ void voice_pipeline_default_config(voice_pipeline_config_t *out) {
     out->auto_start_capture = false;
     out->enable_wake_word   = false;
     out->voice_bridge_ws_url = NULL;
+    // Slice 9: TTS playback defaults — disabled. Pinout follows the
+    // suggested Freenove ESP32-S3 convention: BCLK=11, LRC=12, DIN=13.
+    // Confirm at flash time before driving the DAC.
+    out->enable_tts_playback = false;
+    out->i2s_out_bclk_pin    = 11;
+    out->i2s_out_lrc_pin     = 12;
+    out->i2s_out_din_pin     = 13;
 }
 
 bool voice_pipeline_wake_word_active(void) {
@@ -202,6 +214,48 @@ static esp_err_t i2s_setup(void) {
         s_pipe.rx_chan = NULL;
         return err;
     }
+    return ESP_OK;
+}
+
+// Slice 9: bring up the I2S TX channel for TTS playback on a separate
+// I2S port (I2S_NUM_1) so the mic capture on I2S_NUM_0 keeps running
+// untouched. Configures Philips std mode, mono, 16-bit, at the
+// pipeline's default sample rate (typically 16 kHz). The actual TTS
+// rate may differ (Piper f5_tts ≈ 24 kHz) — voice_pipeline_play_start
+// reconfigures the clock on the fly when needed.
+static esp_err_t i2s_tx_setup(void) {
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+    esp_err_t err = i2s_new_channel(&chan_cfg, &s_pipe.tx_chan, NULL);
+    if (err != ESP_OK) return err;
+
+    // Initial clock = same as mic; will be reconfigured at play_start
+    // if the bridge announces a different rate.
+    s_pipe.tx_sample_rate = s_pipe.cfg.sample_rate_hz;
+
+    i2s_std_config_t std_cfg = {
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(s_pipe.tx_sample_rate),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                        I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = s_pipe.cfg.i2s_out_bclk_pin,
+            .ws   = s_pipe.cfg.i2s_out_lrc_pin,
+            .dout = s_pipe.cfg.i2s_out_din_pin,
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv   = false,
+            },
+        },
+    };
+    err = i2s_channel_init_std_mode(s_pipe.tx_chan, &std_cfg);
+    if (err != ESP_OK) {
+        i2s_del_channel(s_pipe.tx_chan);
+        s_pipe.tx_chan = NULL;
+        return err;
+    }
+    s_pipe.tx_enabled = false;
     return ESP_OK;
 }
 
@@ -332,6 +386,13 @@ static void capture_task(void *pv) {
             }
             if (bytes_read == 0) continue;
 
+            // Slice 9: mute-during-TTS gate. While the pipeline is in
+            // SPEAKING state we keep draining I2S so the DMA buffers
+            // don't overflow, but we do NOT feed AFE — this prevents
+            // the speaker output (which leaks back into the mic) from
+            // re-triggering the wake word during a TTS reply.
+            if (s_pipe.state == VOICE_STATE_SPEAKING) continue;
+
             s_pipe.afe_iface->feed(s_pipe.afe_data, feed_buf);
 
             // Drain anything available without blocking the feed cadence.
@@ -447,6 +508,20 @@ esp_err_t voice_pipeline_init(const voice_pipeline_config_t *config) {
         return ESP_OK;
     }
 
+    // Slice 9: optional I2S TX bring-up for TTS playback. Failure is
+    // non-fatal — the rest of the voice loop still works.
+    if (cfg.enable_tts_playback) {
+        esp_err_t te = i2s_tx_setup();
+        if (te != ESP_OK) {
+            ESP_LOGW(TAG, "i2s_tx_setup failed: %s — TTS playback disabled",
+                     esp_err_to_name(te));
+        } else {
+            ESP_LOGI(TAG, "I2S TX ready (BCLK=%d LRC=%d DIN=%d) — TTS enabled",
+                     cfg.i2s_out_bclk_pin, cfg.i2s_out_lrc_pin,
+                     cfg.i2s_out_din_pin);
+        }
+    }
+
     if (cfg.enable_wake_word) {
         esp_err_t we = wake_word_setup();
         if (we != ESP_OK) {
@@ -523,5 +598,66 @@ voice_state_t voice_pipeline_get_state(void) {
 
 esp_err_t voice_pipeline_set_state(voice_state_t state) {
     s_pipe.state = state;
+    return ESP_OK;
+}
+
+// ── Slice 9: TTS playback over I2S TX (I2S_NUM_1) ────────────────────────────
+
+esp_err_t voice_pipeline_play_start(uint32_t sample_rate, const char *format) {
+    if (!s_pipe.ready) return ESP_ERR_INVALID_STATE;
+    if (!s_pipe.tx_chan) {
+        ESP_LOGW(TAG, "play_start: no TX channel (enable_tts_playback=false?)");
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Reconfigure the I2S clock if the bridge announces a different rate.
+    // F5-TTS produces 24 kHz; the mic side runs at 16 kHz by default.
+    if (sample_rate != 0 && sample_rate != s_pipe.tx_sample_rate) {
+        if (s_pipe.tx_enabled) {
+            i2s_channel_disable(s_pipe.tx_chan);
+            s_pipe.tx_enabled = false;
+        }
+        i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
+        esp_err_t err = i2s_channel_reconfig_std_clock(s_pipe.tx_chan, &clk);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "play_start: clk reconfig %u Hz failed: %s",
+                     (unsigned) sample_rate, esp_err_to_name(err));
+            return err;
+        }
+        s_pipe.tx_sample_rate = sample_rate;
+    }
+    if (!s_pipe.tx_enabled) {
+        esp_err_t err = i2s_channel_enable(s_pipe.tx_chan);
+        if (err != ESP_OK) return err;
+        s_pipe.tx_enabled = true;
+    }
+    voice_pipeline_set_state(VOICE_STATE_SPEAKING);
+    ESP_LOGI(TAG, "play_start: sr=%u format=%s",
+             (unsigned) sample_rate, format ? format : "(null)");
+    return ESP_OK;
+}
+
+esp_err_t voice_pipeline_play_chunk(const uint8_t *buf, size_t len) {
+    if (!s_pipe.ready || !s_pipe.tx_chan || !s_pipe.tx_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
+    size_t written = 0;
+    esp_err_t err = i2s_channel_write(s_pipe.tx_chan, buf, len, &written,
+                                      pdMS_TO_TICKS(100));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "play_chunk: i2s write err=%s wrote=%u/%u",
+                 esp_err_to_name(err), (unsigned) written, (unsigned) len);
+    }
+    return err;
+}
+
+esp_err_t voice_pipeline_play_end(void) {
+    if (!s_pipe.ready) return ESP_ERR_INVALID_STATE;
+    if (s_pipe.tx_chan && s_pipe.tx_enabled) {
+        i2s_channel_disable(s_pipe.tx_chan);
+        s_pipe.tx_enabled = false;
+    }
+    voice_pipeline_set_state(VOICE_STATE_IDLE);
+    ESP_LOGI(TAG, "play_end");
     return ESP_OK;
 }
