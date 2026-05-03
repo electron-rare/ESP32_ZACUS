@@ -334,14 +334,80 @@ esp_err_t npc_engine_trigger_cue(const char *cue_id) {
     return err;
 }
 
+// Resolve a scene index to the canonical puzzle id used by the hints
+// engine (matches game/scenarios/npc_phrases.yaml). Returns the count
+// of bytes written (excluding NUL). Always writes at least the fallback
+// "SCENE_NPC" so callers can rely on a non-empty string.
+static size_t scene_to_puzzle_id(uint8_t scene, char *out, size_t cap) {
+    if (out == NULL || cap == 0) return 0;
+    const char *id = (scene < kSceneCount) ? kSceneIds[scene] : "SCENE_NPC";
+    int written = snprintf(out, cap, "%s", id);
+    if (written < 0) {
+        out[0] = '\0';
+        return 0;
+    }
+    return ((size_t) written < cap) ? (size_t) written : (cap - 1);
+}
+
 esp_err_t npc_engine_set_step(uint8_t step_id, uint32_t expected_duration_ms) {
     if (!s_engine.ready) return ESP_ERR_INVALID_STATE;
 
+    const uint8_t prev_scene = s_engine.core.current_scene;
     s_engine.core.current_step = step_id;
     npc_on_scene_change(&s_engine.core, step_id, expected_duration_ms,
                         s_engine.core.total_elapsed_ms);
     ESP_LOGI(TAG, "step set to %u (expected_duration=%u ms)",
              (unsigned) step_id, (unsigned) expected_duration_ms);
+
+    // Slice 11 (P5): notify the hints engine that the operator just
+    // entered a new pivot. Idempotent on the server, so we still post
+    // even if step_id hasn't moved (defensive: the scenario may rebind
+    // the same step after a recovery). hints_client logs the outcome
+    // internally — we don't propagate the failure (best-effort).
+    if (hints_client_is_ready()) {
+        char puzzle_id[NPC_ENGINE_CUE_ID_MAX];
+        scene_to_puzzle_id(step_id, puzzle_id, sizeof(puzzle_id));
+        if (step_id != prev_scene) {
+            ESP_LOGI(TAG, "scene changed %u → %u, signalling /puzzle_start",
+                     (unsigned) prev_scene, (unsigned) step_id);
+        }
+        (void) hints_client_puzzle_start(puzzle_id);
+    }
+    return ESP_OK;
+}
+
+esp_err_t npc_engine_set_group_profile(const char *profile) {
+    // Thin pass-through. hints_client validates the value and logs the
+    // outcome. Kept on npc_engine so the rest of the firmware doesn't
+    // need to depend directly on hints_client just for this knob.
+    if (!hints_client_is_ready()) {
+        ESP_LOGW(TAG, "set_group_profile(\"%s\") before hints_client_init",
+                 profile ? profile : "(null)");
+        return ESP_ERR_INVALID_STATE;
+    }
+    return hints_client_set_group_profile(profile);
+}
+
+size_t npc_engine_current_puzzle_id(char *out, size_t cap) {
+    if (out == NULL || cap == 0) return 0;
+    uint8_t scene = s_engine.ready ? s_engine.core.current_scene : 0xFF;
+    return scene_to_puzzle_id(scene, out, cap);
+}
+
+esp_err_t npc_engine_report_failed_attempt(uint8_t scene) {
+    if (!s_engine.ready) return ESP_ERR_INVALID_STATE;
+    if (!hints_client_is_ready()) {
+        // Track locally only — keeps failed_attempts coherent so the
+        // stuck timer / mood updater still react.
+        s_engine.core.failed_attempts++;
+        ESP_LOGD(TAG, "failed_attempt scene=%u (hints offline, local only)",
+                 (unsigned) scene);
+        return ESP_OK;
+    }
+    char puzzle_id[NPC_ENGINE_CUE_ID_MAX];
+    scene_to_puzzle_id(scene, puzzle_id, sizeof(puzzle_id));
+    s_engine.core.failed_attempts++;
+    (void) hints_client_attempt_failed(puzzle_id);
     return ESP_OK;
 }
 
@@ -360,8 +426,14 @@ esp_err_t npc_engine_request_hint(uint8_t puzzle_id, uint8_t level,
     // fall back to a hardcoded French placeholder so the surrounding NPC
     // orchestration can still be exercised end-to-end (CI smoke, dry runs).
     if (hints_client_is_ready()) {
-        char puzzle_str[16];
-        snprintf(puzzle_str, sizeof(puzzle_str), "%u", (unsigned) puzzle_id);
+        // Slice 11 (P5): map the numeric puzzle hint id to the same
+        // SCENE_* string id used by /hints/puzzle_start. When the
+        // dispatcher passes id=0 (placeholder), fall back to the active
+        // scene so the hints engine can still pick a contextual answer.
+        char puzzle_str[NPC_ENGINE_CUE_ID_MAX];
+        const uint8_t scene_for_id = (puzzle_id == 0)
+            ? s_engine.core.current_scene : puzzle_id;
+        scene_to_puzzle_id(scene_for_id, puzzle_str, sizeof(puzzle_str));
         esp_err_t err = hints_client_ask_async(puzzle_str, puzzle_id, clamped,
                                                (hints_client_callback_t) cb,
                                                user_ctx, 0, 0);

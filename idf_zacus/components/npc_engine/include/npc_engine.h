@@ -179,6 +179,25 @@ esp_err_t npc_engine_request_hint(uint8_t puzzle_id, uint8_t level,
 // Read-only access to the underlying core state — handy for diagnostics.
 const npc_state_t *npc_engine_state(void);
 
+// Slice 11 (P5): forward the global hints group profile to hints_client.
+// `profile` must be one of "TECH", "NON_TECH", "MIXED", "BOTH".
+// Thin wrapper kept here to give callers a single npc_engine_* surface.
+esp_err_t npc_engine_set_group_profile(const char *profile);
+
+// Write the active puzzle id (e.g. "SCENE_LA_DETECTOR") into `out`,
+// truncated to `cap` bytes (NUL-terminated). Falls back to "SCENE_NPC"
+// when no scene is active or the engine is not initialised so callers
+// always have a non-empty id to send to the hints engine. Returns the
+// number of bytes written excluding the trailing NUL.
+size_t npc_engine_current_puzzle_id(char *out, size_t cap);
+
+// Slice 11 (P5): notify the hints engine that the operator just made an
+// invalid attempt on `scene`. Resolves the scene to the same string id
+// returned by npc_engine_current_puzzle_id() and forwards through
+// hints_client_attempt_failed(). Best-effort: returns ESP_OK even if the
+// hints engine is unreachable, the failure is logged.
+esp_err_t npc_engine_report_failed_attempt(uint8_t scene);
+
 #ifdef __cplusplus
 }
 #endif

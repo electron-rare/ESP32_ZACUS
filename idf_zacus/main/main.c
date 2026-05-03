@@ -353,6 +353,42 @@ void app_main(void) {
             if (hints_err != ESP_OK) {
                 ESP_LOGW(TAG, "hints_client_init failed: %s — npc will use stub",
                          esp_err_to_name(hints_err));
+            } else {
+                // Slice 11 (P5): load the group profile from NVS so the
+                // hints engine can tune answers per audience (TECH /
+                // NON_TECH / MIXED / BOTH). Default to MIXED when the
+                // key is absent or holds an unknown value.
+                // TODO(slice-11): endpoint /game/group_profile to update
+                // NVS at runtime — for now the value is flashed by the
+                // dashboard or `idf.py nvs-partition-gen` outputs.
+                nvs_handle_t gh;
+                esp_err_t open_err = nvs_open("zacus", NVS_READONLY, &gh);
+                char profile[HINTS_CLIENT_GROUP_PROFILE_MAX] = "MIXED";
+                if (open_err == ESP_OK) {
+                    size_t plen = sizeof(profile);
+                    esp_err_t kerr = nvs_get_str(gh, "group_profile",
+                                                 profile, &plen);
+                    if (kerr != ESP_OK) {
+                        ESP_LOGI(TAG, "NVS zacus/group_profile missing (%s) "
+                                      "— defaulting to MIXED",
+                                 esp_err_to_name(kerr));
+                        strncpy(profile, "MIXED", sizeof(profile) - 1);
+                        profile[sizeof(profile) - 1] = '\0';
+                    }
+                    nvs_close(gh);
+                } else {
+                    ESP_LOGI(TAG, "NVS namespace 'zacus' not found (%s) "
+                                  "— defaulting group_profile=MIXED",
+                             esp_err_to_name(open_err));
+                }
+                esp_err_t set_err = hints_client_set_group_profile(profile);
+                if (set_err != ESP_OK) {
+                    // Validation rejected the NVS value — force MIXED
+                    // so the engine still has a usable hint policy.
+                    ESP_LOGW(TAG, "group_profile \"%s\" rejected — falling "
+                                  "back to MIXED", profile);
+                    (void) hints_client_set_group_profile("MIXED");
+                }
             }
 
             // Slice 8: voice → npc_engine routing layer. Must come

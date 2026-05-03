@@ -32,11 +32,23 @@ static const char *const HINT_KEYWORDS[] = {
 static const size_t HINT_KEYWORDS_COUNT =
     sizeof(HINT_KEYWORDS) / sizeof(HINT_KEYWORDS[0]);
 
-// Placeholder puzzle id used while the scenario engine doesn't yet
-// surface the active puzzle context. The hints engine treats id == 0
-// as "decide based on current scene context" so this stays usable
-// end-to-end. See P1 voice-pipeline spec §slice-8.
-#define DISPATCHER_PLACEHOLDER_PUZZLE_ID  0
+// Slice 11 (P5) failure-signal keywords. These hints map onto the
+// hints engine's /attempt_failed lifecycle endpoint (best-effort,
+// only updates the failure counter for adaptive escalation). The
+// dispatcher fires this BEFORE the hint fast-path so a single
+// "non c'est faux, donne-moi un indice" both bumps the counter and
+// requests a hint.
+static const char *const FAIL_KEYWORDS[] = {
+    "non",
+    "faux",
+    "mauvais",
+    "rate",          // matches "raté" / "rate" after fold
+    "marche pas",
+    "ca marche pas", // ASCII-folded "ça marche pas"
+};
+static const size_t FAIL_KEYWORDS_COUNT =
+    sizeof(FAIL_KEYWORDS) / sizeof(FAIL_KEYWORDS[0]);
+
 // level == 0 = let the hints engine pick the escalation level via its
 // adaptive policy. See specs/AI_INTEGRATION_SPEC.md.
 #define DISPATCHER_DEFAULT_HINT_LEVEL     0
@@ -171,13 +183,33 @@ static void normalize_for_match(const char *src, char *dst, size_t cap) {
     dst[out] = '\0';
 }
 
-static bool contains_keyword(const char *normalized) {
+static bool contains_any(const char *normalized,
+                         const char *const *table, size_t count,
+                         const char **hit_out) {
     if (!normalized || !*normalized) return false;
-    for (size_t i = 0; i < HINT_KEYWORDS_COUNT; ++i) {
-        if (strstr(normalized, HINT_KEYWORDS[i]) != NULL) {
-            ESP_LOGI(TAG, "keyword hit: \"%s\"", HINT_KEYWORDS[i]);
+    for (size_t i = 0; i < count; ++i) {
+        if (strstr(normalized, table[i]) != NULL) {
+            if (hit_out) *hit_out = table[i];
             return true;
         }
+    }
+    return false;
+}
+
+static bool contains_keyword(const char *normalized) {
+    const char *hit = NULL;
+    if (contains_any(normalized, HINT_KEYWORDS, HINT_KEYWORDS_COUNT, &hit)) {
+        ESP_LOGI(TAG, "hint keyword hit: \"%s\"", hit);
+        return true;
+    }
+    return false;
+}
+
+static bool contains_failure_signal(const char *normalized) {
+    const char *hit = NULL;
+    if (contains_any(normalized, FAIL_KEYWORDS, FAIL_KEYWORDS_COUNT, &hit)) {
+        ESP_LOGI(TAG, "failure keyword hit: \"%s\"", hit);
+        return true;
     }
     return false;
 }
@@ -231,21 +263,51 @@ void voice_dispatcher_handle_stt(const char *text, bool final) {
     normalize_for_match(text, folded, sizeof(folded));
     ESP_LOGI(TAG, "stt final raw=\"%s\" folded=\"%s\"", text, folded);
 
+    // Slice 11 (P5): bump the failure counter on a clear "non/faux/..."
+    // signal BEFORE the hint fast-path, so the hints engine's adaptive
+    // policy sees the incremented count when picking the level. This is
+    // a coarse heuristic — wiring real input validators (puzzle engines
+    // reporting wrong codes / wrong gestures) is the proper hook.
+    // TODO(slice-12): replace the keyword heuristic with explicit input
+    // validation hooks from the scenario / puzzle engines.
+    if (contains_failure_signal(folded)) {
+        const npc_state_t *st = npc_engine_state();
+        uint8_t scene = st ? st->current_scene : 0xFF;
+        esp_err_t fa_err = npc_engine_report_failed_attempt(scene);
+        if (fa_err != ESP_OK) {
+            ESP_LOGD(TAG, "report_failed_attempt: %s",
+                     esp_err_to_name(fa_err));
+        }
+    }
+
     if (!contains_keyword(folded)) {
         ESP_LOGI(TAG, "no keyword match, deferring to LLM intent path");
         return;
     }
 
+    // Slice 11 (P5): resolve the active puzzle id from npc_engine
+    // (e.g. "SCENE_LA_DETECTOR") so the hints engine can pick a
+    // contextual answer. Empty/unknown scenes fall back to "SCENE_NPC"
+    // (handled inside npc_engine_current_puzzle_id).
+    char puzzle_id[64] = {0};
+    npc_engine_current_puzzle_id(puzzle_id, sizeof(puzzle_id));
+
+    // npc_engine_request_hint takes a numeric puzzle id; passing the
+    // current scene index keeps that layer in sync with the string id
+    // we just resolved (npc_engine maps both back to kSceneIds[]).
+    const npc_state_t *st = npc_engine_state();
+    uint8_t puzzle_num = st ? st->current_scene : 0;
+
     esp_err_t err = npc_engine_request_hint(
-        DISPATCHER_PLACEHOLDER_PUZZLE_ID,
+        puzzle_num,
         DISPATCHER_DEFAULT_HINT_LEVEL,
         on_hint_response,
         NULL);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "npc_engine_request_hint: %s", esp_err_to_name(err));
     } else {
-        ESP_LOGI(TAG, "hint request dispatched (puzzle=%u level=%u)",
-                 (unsigned) DISPATCHER_PLACEHOLDER_PUZZLE_ID,
+        ESP_LOGI(TAG, "hint request dispatched (puzzle=\"%s\" num=%u level=%u)",
+                 puzzle_id, (unsigned) puzzle_num,
                  (unsigned) DISPATCHER_DEFAULT_HINT_LEVEL);
     }
 }
