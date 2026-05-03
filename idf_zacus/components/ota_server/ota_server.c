@@ -360,3 +360,7 @@ const ota_status_t* ota_server_get_status(void) {
 void ota_server_set_complete_cb(void (*cb)(bool success)) {
     s_complete_cb = cb;
 }
+
+httpd_handle_t ota_server_get_handle(void) {
+    return s_server;
+}

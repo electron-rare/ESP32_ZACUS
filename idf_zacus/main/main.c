@@ -42,6 +42,7 @@
 #include "hints_client.h"
 #include "voice_pipeline.h"
 #include "voice_dispatcher.h"
+#include "voice_hook_endpoint.h"
 
 // Hints engine endpoint (slice 5). Hardcoded for now — slice 7 will move
 // this to NVS so the field operator can repoint the firmware without a flash.
@@ -295,6 +296,18 @@ void app_main(void) {
         ESP_LOGE(TAG, "ota_server_init failed: %s", esp_err_to_name(ota_err));
     } else {
         ESP_LOGI(TAG, "OTA server listening on :%d", OTA_SERVER_PORT);
+
+        // Slice 10: piggyback the PLIP /voice/hook endpoint on the same
+        // esp_http_server instance. Independent of voice_pipeline_init
+        // success — the handler tolerates a degraded pipeline (the
+        // voice_pipeline_* APIs return ESP_ERR_INVALID_STATE which we
+        // log and report as a 200 with whatever state we have).
+        httpd_handle_t httpd = ota_server_get_handle();
+        esp_err_t hook_err = voice_hook_endpoint_init(httpd);
+        if (hook_err != ESP_OK) {
+            ESP_LOGW(TAG, "voice_hook_endpoint_init: %s",
+                     esp_err_to_name(hook_err));
+        }
     }
 
     if (mount_littlefs() == ESP_OK) {
@@ -362,6 +375,12 @@ void app_main(void) {
             // over WebSocket once the wake word fires. The bridge runs
             // STT (whisper) and may auto-route to the LLM intent layer.
             voice_cfg.voice_bridge_ws_url = ZACUS_VOICE_BRIDGE_WS_URL;
+            // Slice 9 + 10: enable the I2S TX leg so TTS payloads coming
+            // back from the bridge land on the MAX98357A DAC. Wake-word
+            // stays enabled — PLIP hook is the primary path for voice
+            // sessions, but "hi esp" remains a backup if the phone is
+            // unplugged or its hook switch fails.
+            voice_cfg.enable_tts_playback = true;
             voice_pipeline_set_wake_callback(on_voice_wake, NULL);
             voice_pipeline_set_stt_callback(on_voice_stt, NULL);
             esp_err_t voice_err = voice_pipeline_init(&voice_cfg);

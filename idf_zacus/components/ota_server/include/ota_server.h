@@ -77,6 +77,19 @@ const ota_status_t* ota_server_get_status(void);
  */
 void ota_server_set_complete_cb(void (*cb)(bool success));
 
+/**
+ * @brief Get the underlying esp_http_server handle so other components
+ *        can register additional URI handlers on the same listener
+ *        (port 80) instead of standing up a second httpd instance.
+ *
+ * Returns NULL if ota_server_init() has not been called or failed.
+ *
+ * Used by the voice_hook_endpoint component (PLIP /voice/hook bridge,
+ * slice 10) to attach POST /voice/hook + GET /voice/hook/state without
+ * burning a second TCP socket / second httpd worker.
+ */
+httpd_handle_t ota_server_get_handle(void);
+
 #ifdef __cplusplus
 }
 #endif

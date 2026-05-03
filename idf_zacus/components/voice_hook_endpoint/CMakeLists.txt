@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "voice_hook_endpoint.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_http_server
+        json
+        voice_pipeline
+        ota_server
+        freertos
+        log
+)

@@ -10,6 +10,7 @@ idf_component_register(
         npc_engine
         hints_client
         voice_pipeline
+        voice_hook_endpoint
         nvs_flash
         esp_timer
         esp_system
