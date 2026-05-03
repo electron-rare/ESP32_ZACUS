@@ -36,6 +36,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
+#include "mdns.h"
+
 #include "ota_server.h"
 #include "media_manager.h"
 #include "npc_engine.h"
@@ -43,6 +45,7 @@
 #include "voice_pipeline.h"
 #include "voice_dispatcher.h"
 #include "voice_hook_endpoint.h"
+#include "game_endpoint.h"
 
 // Hints engine endpoint (slice 5). Hardcoded for now — slice 7 will move
 // this to NVS so the field operator can repoint the firmware without a flash.
@@ -273,6 +276,66 @@ static bool wifi_bring_up(void) {
     return false;
 }
 
+// ─── mDNS bring-up (slice 12) ────────────────────────────────────────────────
+//
+// Publishes `zacus-master.local` once Wi-Fi STA is up so PLIP and the
+// dashboard can discover the master without a DHCP reservation. We
+// also advertise a `_zacus._tcp` service on port 80 with TXT records
+// pointing at the voice-hook URI — useful for `dns-sd -B _zacus._tcp`
+// style introspection from the workshop laptop.
+//
+// In AP-fallback mode we deliberately skip mDNS: there is no upstream
+// resolver to claim the hostname against, and several tooling stacks
+// (avahi, bonjour) trip over a duplicate-name race when the AP later
+// goes back to STA. The PLIP fallback in that scenario is the static
+// AP IP (192.168.4.1).
+
+static void start_mdns(void) {
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_init failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = mdns_hostname_set("zacus-master");
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_hostname_set: %s", esp_err_to_name(err));
+        // Continue — the daemon is up, just no hostname claim.
+    }
+
+    err = mdns_instance_name_set("Zacus Master ESP32-S3");
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_instance_name_set: %s", esp_err_to_name(err));
+    }
+
+    // Advertise the master HTTP surface as a `_zacus._tcp` service on
+    // port 80. The TXT records let PLIP firmware confirm it found the
+    // right device + which voice-hook path to POST to (so a future
+    // protocol bump can be discovered without reflashing PLIP).
+    err = mdns_service_add(NULL, "_zacus", "_tcp", 80, NULL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_service_add(_zacus._tcp:80): %s",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    (void) mdns_service_instance_name_set("_zacus", "_tcp",
+                                          "Zacus Master Voice Hook");
+
+    mdns_txt_item_t txt[] = {
+        {"path",    "/voice/hook"},
+        {"version", "1"},
+    };
+    err = mdns_service_txt_set("_zacus", "_tcp", txt,
+                               sizeof(txt) / sizeof(txt[0]));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_service_txt_set: %s", esp_err_to_name(err));
+    }
+
+    ESP_LOGI(TAG, "mDNS up — hostname=zacus-master.local, "
+                  "service=_zacus._tcp:80");
+}
+
 // ─── app_main ────────────────────────────────────────────────────────────────
 
 void app_main(void) {
@@ -291,6 +354,16 @@ void app_main(void) {
     bool sta_ok = wifi_bring_up();
     ESP_LOGI(TAG, "Wi-Fi up (mode=%s)", sta_ok ? "STA" : "AP-fallback");
 
+    // Slice 12: publish zacus-master.local once we're on a real LAN.
+    // Skip in AP-fallback to avoid hostname-claim races when STA later
+    // recovers (and because there is no upstream resolver anyway).
+    if (sta_ok) {
+        start_mdns();
+    } else {
+        ESP_LOGW(TAG, "mDNS not started in AP mode "
+                      "(PLIP must use the AP IP fallback)");
+    }
+
     esp_err_t ota_err = ota_server_init();
     if (ota_err != ESP_OK) {
         ESP_LOGE(TAG, "ota_server_init failed: %s", esp_err_to_name(ota_err));
@@ -307,6 +380,18 @@ void app_main(void) {
         if (hook_err != ESP_OK) {
             ESP_LOGW(TAG, "voice_hook_endpoint_init: %s",
                      esp_err_to_name(hook_err));
+        }
+
+        // Slice 12: REST surface for runtime game tuning. Today this
+        // exposes /game/group_profile (GET + POST) so the dashboard /
+        // GM can swap the hints policy without reflashing NVS. The
+        // POST handler validates via hints_client_set_group_profile()
+        // and persists to NVS namespace "zacus" / key "group_profile"
+        // (the same slot main.c reads at boot).
+        esp_err_t game_err = game_endpoint_init(httpd);
+        if (game_err != ESP_OK) {
+            ESP_LOGW(TAG, "game_endpoint_init: %s",
+                     esp_err_to_name(game_err));
         }
     }
 

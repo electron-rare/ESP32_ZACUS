@@ -14,3 +14,8 @@ dependencies:
   ## and receive STT transcripts. The 1.4 line is the current stable
   ## series for IDF 5.x (event loop based, supports binary frames).
   espressif/esp_websocket_client: "~1.4"
+  ## Slice 12: mDNS so PLIP and the dashboard can discover the master
+  ## as `zacus-master.local` instead of relying on a DHCP reservation
+  ## or a manual IP probe. 1.6 is the current stable line for IDF 5.x
+  ## (TXT records + service browsing supported).
+  espressif/mdns: "~1.6"

@@ -11,10 +11,12 @@ idf_component_register(
         hints_client
         voice_pipeline
         voice_hook_endpoint
+        game_endpoint
         nvs_flash
         esp_timer
         esp_system
         esp_wifi
         esp_netif
         esp_event
+        espressif__mdns
 )

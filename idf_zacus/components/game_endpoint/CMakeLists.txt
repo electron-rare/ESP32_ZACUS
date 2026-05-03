@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "game_endpoint.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_http_server
+        json
+        nvs_flash
+        hints_client
+        ota_server
+        freertos
+        log
+)
