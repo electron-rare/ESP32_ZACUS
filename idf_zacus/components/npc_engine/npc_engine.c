@@ -23,6 +23,7 @@
 #include "esp_log.h"
 
 #include "media_manager.h"
+#include "hints_client.h"
 
 static const char *TAG = "npc_engine";
 
@@ -349,23 +350,39 @@ esp_err_t npc_engine_request_hint(uint8_t puzzle_id, uint8_t level,
     if (!s_engine.ready) return ESP_ERR_INVALID_STATE;
     if (cb == NULL) return ESP_ERR_INVALID_ARG;
 
-    // TODO(slice-6): replace with HTTP POST to hints engine /hints/ask.
-    // For now we synchronously deliver a hardcoded French placeholder so
-    // the surrounding NPC orchestration can be wired and tested end-to-end.
+    const uint8_t clamped = (level > NPC_MAX_HINT_LEVEL)
+        ? NPC_MAX_HINT_LEVEL : level;
+
+    npc_on_hint_request(&s_engine.core, s_engine.core.total_elapsed_ms);
+
+    // Slice 5: when the hints_client component has been initialised, route
+    // the request through the real HTTP backend asynchronously. Otherwise
+    // fall back to a hardcoded French placeholder so the surrounding NPC
+    // orchestration can still be exercised end-to-end (CI smoke, dry runs).
+    if (hints_client_is_ready()) {
+        char puzzle_str[16];
+        snprintf(puzzle_str, sizeof(puzzle_str), "%u", (unsigned) puzzle_id);
+        esp_err_t err = hints_client_ask_async(puzzle_str, puzzle_id, clamped,
+                                               (hints_client_callback_t) cb,
+                                               user_ctx, 0, 0);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "hint request puzzle=%u level=%u -> hints_client async",
+                     (unsigned) puzzle_id, (unsigned) clamped);
+            return ESP_OK;
+        }
+        ESP_LOGW(TAG, "hints_client_ask_async failed (%s) — using stub",
+                 esp_err_to_name(err));
+    }
+
     static const char *const kStubHints[NPC_MAX_HINT_LEVEL + 1] = {
         "Regarde autour de toi, la solution est plus proche que tu ne crois.",
         "As-tu pensé à observer chaque indice plus attentivement ?",
         "Concentre-toi sur l'objet le plus inhabituel de la pièce.",
         "Le code se trouve dans la séquence des couleurs, dans l'ordre.",
     };
-    const uint8_t clamped = (level > NPC_MAX_HINT_LEVEL)
-        ? NPC_MAX_HINT_LEVEL : level;
     const char *text = kStubHints[clamped];
-
     ESP_LOGI(TAG, "hint request puzzle=%u level=%u -> stub \"%s\"",
              (unsigned) puzzle_id, (unsigned) level, text);
-
-    npc_on_hint_request(&s_engine.core, s_engine.core.total_elapsed_ms);
     cb(puzzle_id, clamped, ESP_OK, text, user_ctx);
     return ESP_OK;
 }

@@ -39,6 +39,12 @@
 #include "ota_server.h"
 #include "media_manager.h"
 #include "npc_engine.h"
+#include "hints_client.h"
+#include "voice_pipeline.h"
+
+// Hints engine endpoint (slice 5). Hardcoded for now — slice 7 will move
+// this to NVS so the field operator can repoint the firmware without a flash.
+#define ZACUS_HINTS_BASE_URL  "http://192.168.0.150:8302"
 
 static const char *TAG = "zacus_main";
 
@@ -290,6 +296,24 @@ void app_main(void) {
             if (npc_err != ESP_OK) {
                 ESP_LOGE(TAG, "npc_engine_init failed: %s",
                          esp_err_to_name(npc_err));
+            }
+
+            // Slice 5: bring up the hints HTTP client (so npc_engine can
+            // route hint requests through the real backend) and the voice
+            // pipeline (I2S capture stub + state machine, no auto-start).
+            esp_err_t hints_err = hints_client_init(ZACUS_HINTS_BASE_URL);
+            if (hints_err != ESP_OK) {
+                ESP_LOGW(TAG, "hints_client_init failed: %s — npc will use stub",
+                         esp_err_to_name(hints_err));
+            }
+
+            voice_pipeline_config_t voice_cfg;
+            voice_pipeline_default_config(&voice_cfg);
+            voice_cfg.auto_start_capture = false;
+            esp_err_t voice_err = voice_pipeline_init(&voice_cfg);
+            if (voice_err != ESP_OK) {
+                ESP_LOGW(TAG, "voice_pipeline_init failed: %s",
+                         esp_err_to_name(voice_err));
             }
         }
     }

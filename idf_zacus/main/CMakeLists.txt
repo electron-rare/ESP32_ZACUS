@@ -8,6 +8,8 @@ idf_component_register(
         ota_server
         media_manager
         npc_engine
+        hints_client
+        voice_pipeline
         nvs_flash
         esp_timer
         esp_system

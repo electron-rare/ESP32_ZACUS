@@ -21,6 +21,7 @@ idf_component_register(
         "include"
     REQUIRES
         media_manager
+        hints_client
         esp_timer
         esp_system
         nvs_flash

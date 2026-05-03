@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "voice_pipeline.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_driver_i2s
+        esp_timer
+        esp_system
+        nvs_flash
+        freertos
+        log
+        media_manager
+        npc_engine
+        hints_client
+)

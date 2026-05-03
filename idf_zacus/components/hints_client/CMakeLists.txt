@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "hints_client.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_http_client
+        esp_timer
+        esp_system
+        esp_wifi
+        esp_netif
+        nvs_flash
+        json
+        freertos
+        log
+)
