@@ -1,0 +1,18 @@
+# QEMU-specific overrides. Layered on top of sdkconfig.defaults via
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build qemu
+# Reasons:
+#  - QEMU's esp32s3 machine does not emulate Octal PSRAM → boot crashes on
+#    "PSRAM chip not found" without these overrides.
+#  - WiFi / BT radios are stubbed in QEMU, the Ethernet open_eth NIC stands in
+#    for IP connectivity (hostfwd=tcp::8580-:80).
+#  - esp-sr / wake-word buffers depend on PSRAM, so they must also be disabled.
+
+CONFIG_SPIRAM=n
+CONFIG_SPIRAM_MODE_OCT=n
+CONFIG_SPIRAM_SPEED_80M=n
+
+# esp-sr disabled because its buffers expect PSRAM. The HTTP scenario endpoint
+# we're smoke-testing has no dependency on the voice pipeline.
+CONFIG_USE_AFE=n
+CONFIG_USE_WAKENET=n
+CONFIG_USE_MULTINET=n

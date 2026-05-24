@@ -310,7 +310,7 @@ esp_err_t ota_server_init(void) {
     // HTTP server config
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port     = OTA_SERVER_PORT;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 16;   // ota (3) + voice_hook (2) + game (3) + headroom
     config.uri_match_fn    = httpd_uri_match_wildcard;
     config.stack_size      = 8192;
 

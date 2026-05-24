@@ -34,9 +34,29 @@ extern "C" {
 // "NON_TECH"} (~30 bytes) plus future additive fields.
 #define GAME_ENDPOINT_MAX_BODY_BYTES 256
 
+// Larger cap for the Runtime 3 IR scenario blob. 64 KiB lets a
+// reasonable escape-room scenario (~50 steps, dialogues + actions)
+// fit comfortably. Scenarios that exceed this should be split
+// across multiple boards or trimmed.
+#define GAME_ENDPOINT_MAX_SCENARIO_BYTES (64 * 1024)
+
+// LittleFS partition label declared in partitions.csv. game_endpoint
+// mounts lazily on first scenario POST. media_manager may also mount
+// the same label — esp_vfs_littlefs_register is idempotent per label.
+#define GAME_ENDPOINT_STORAGE_LABEL  "storage"
+// main.c mounts the storage partition at /littlefs at boot — we reuse the
+// same mount point instead of registering a second base path for the same
+// partition (which fails silently with INVALID_STATE).
+#define GAME_ENDPOINT_STORAGE_BASE   "/littlefs"
+#define GAME_ENDPOINT_SCENARIO_PATH  GAME_ENDPOINT_STORAGE_BASE "/scenario.json"
+#define GAME_ENDPOINT_SCENARIO_BAK   GAME_ENDPOINT_STORAGE_BASE "/scenario.bak"
+
 /**
- * @brief Attach `/game/group_profile` (GET + POST) handlers to an
- *        existing esp_http_server.
+ * @brief Attach all game endpoint handlers to an existing esp_http_server.
+ *
+ * Registers:
+ *   - GET/POST /game/group_profile  (slice 12, runtime hints profile)
+ *   - POST /game/scenario           (slice 13, Runtime 3 IR hot-load)
  *
  * Pass the handle returned by `ota_server_get_handle()`. Returns
  * ESP_ERR_INVALID_ARG if `server` is NULL, or any error propagated

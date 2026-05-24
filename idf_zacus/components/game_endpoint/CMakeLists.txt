@@ -11,4 +11,5 @@ idf_component_register(
         ota_server
         freertos
         log
+        joltwallet__littlefs
 )
