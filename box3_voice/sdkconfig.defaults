@@ -44,3 +44,14 @@ CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 # Heap: place large buffers in PSRAM
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# WiFi credentials — set via `idf.py menuconfig` (Zacus BOX-3 Voice
+# Configuration) or via a local sdkconfig override that is NOT committed.
+# Defaults stay empty so credentials never land in git.
+# CONFIG_ZACUS_WIFI_SSID="..."
+# CONFIG_ZACUS_WIFI_PASSWORD="..."
+
+# esp-box BSP uses the legacy i2c driver; esp_codec_dev uses driver_ng.
+# Force-enable legacy mode so both coexist (and prevent the runtime abort
+# in bsp_display_start when both drivers race to register on the same bus).
+CONFIG_I2C_ENABLE_LEGACY_DRIVERS=y

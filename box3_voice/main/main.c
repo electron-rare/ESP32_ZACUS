@@ -25,6 +25,7 @@
 
 #include "board_config.h"
 #include "voice_ws_client.h"
+#include "scenario_server.h"
 
 /* BSP header — provided by espressif/esp-box component */
 #include "bsp/esp-bsp.h"
@@ -376,6 +377,12 @@ void app_main(void)
 
     /* Start voice bridge connection task (waits for WiFi, then connects WS) */
     xTaskCreate(voice_bridge_task, "voice_bridge", 6144, NULL, 5, NULL);
+
+    /* Start the scenario hot-load HTTP server (POST /game/scenario).
+     * httpd_start binds to all netifs — works as soon as the WiFi STA has an IP. */
+    if (scenario_server_start() != ESP_OK) {
+        ESP_LOGW(TAG, "scenario_server_start failed — IR hot-load unavailable");
+    }
 
     /* TODO: Initialize ESP-SR WakeNet for wake-word detection
      *   - Load WakeNet9 model ("hi esp" or custom)
